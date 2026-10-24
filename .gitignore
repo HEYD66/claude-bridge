@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.log
+
+# 临时测试产物
+scripts/proto/*.tgz
+
+# 第三方参考资料，体积大，不纳入版本库
+参考项目/

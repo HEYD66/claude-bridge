@@ -1,0 +1,72 @@
+Claude Bridge 大改 —— 协议笔记 & 进度（临时文件，完成后删除 scripts/）
+
+== 测试工具 ==
+scripts/proto/mock-api.js  模拟 Anthropic API；drive.js <scenario> 用 claude.exe 跑 scenario-*.js；
+EXTRA 环境变量传额外参数；CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1 开启检查点。
+WSL: wsl -d Ubuntu-24.04-Analysis（有 bash/setsid/tail/tmux/python3，无 sshd，不要 apt 安装）
+WSL 里可通过 /mnt/c/.../claude.exe 调用 Windows 版 claude（interop）。
+
+== 启动参数 ==
+claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages
+  --replay-user-messages --permission-prompt-tool stdio [--prompt-suggestions] [--resume SID]
+  [--resume-session-at UUID --fork-session] + env CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1
+
+== 输入（stdin，每行 JSON）==
+user: {type:'user',message:{role:'user',content:[{type:'text',text},{type:'image',source:{type:'base64',media_type,data}}]},parent_tool_use_id:null,session_id:'',uuid?,priority?:'now'|'next'|'later'}
+  - 运行中发送默认排队；priority:'now' 会打断当前轮（result stop_reason null）后立即执行
+  - 出队执行时回显 {type:'user',...,uuid(我们给的),isReplay:true}
+  - 排队时有 {type:'command_lifecycle',command_uuid,state:'queued'|'completed'}
+control_request: {type:'control_request',request_id,request:{subtype,...}} → control_response {type:'control_response',response:{subtype:'success'|'error',request_id,response|error}}
+  initialize → {commands[{name,description,argumentHint}],agents,output_style,available_output_styles,models[{value,resolvedModel,displayName,description,supportsEffort,supportedEffortLevels,supportsFastMode}],account,claude_code_version,current_permission_mode,fast_mode_state...}
+  interrupt → {still_queued:[]}；result subtype=error_during_execution
+  set_model {model}；set_permission_mode {mode} → {mode}
+  get_context_usage {detail:'summary'} → {categories[{name,tokens,kind}],totalTokens,maxTokens,percentage}
+  get_usage {skip_behaviors:true} → {session:{total_cost_usd,...,model_usage},rate_limits_available,rate_limits}
+  get_session_cost → {text}
+  rewind_files {user_message_id,dry_run?} → {canRewind,filesChanged,insertions,deletions} / {canRewind,skippedLinks}
+  cancel_async_message {message_uuid}；list_permission_rules → {state:{rules[{behavior,source,rule,editability}]}}
+  file_suggestions {query}；get_plan；get_settings；update_settings；stop_task {task_id}
+CLI→host: control_request can_use_tool {tool_name,display_name,input,description,permission_suggestions[],blocked_path,decision_reason,tool_use_id,requires_user_interaction}
+  回复 {behavior:'allow',updatedInput,updatedPermissions?:suggestions} | {behavior:'deny',message}
+  AskUserQuestion: updatedInput={...input,answers:{[question]:'label'（多选逗号分隔）},annotations?}
+  ExitPlanMode（plan 模式下）: requires_user_interaction，input 可能为 {}；allow=批准
+  control_cancel_request（CLI 取消待处理请求）
+
+== 输出事件 ==
+system/init（每轮都有）、system/status、system/session_state_changed{state idle|running|requires_action}
+system/compact_boundary、system/api_retry、system/task_started|task_progress|task_notification|task_updated
+system/notification、system/permission_denied、system/informational
+assistant（每个内容块一条，同 message.id）、user（tool_result；带 tool_use_result 结构化结果：
+  Write: {type:'create'|'update',filePath,content,structuredPatch,originalFile}；Edit: structuredPatch[{oldStart,oldLines,newStart,newLines,lines}]）
+stream_event、result、prompt_suggestion{suggestion}、rate_limit_event{rate_limit_info}、command_lifecycle
+parent_tool_use_id≠null → 子代理消息
+
+== 进度 ==
+[x] 服务器端常驻运行宿主 src/main/session-host.js（RemoteRun.launch/attach/write/closeInput/kill/status/remove）
+[x] 主进程会话引擎重写 src/main/chat-manager.js —— engine-test.js 26 项全部通过（WSL + /opt/claude-test Linux claude + mock）
+    API: send(convId,text,{images,priority,slotId}) stop cancelQueued sendNow control answerPermission(convId,reqId,{behavior,always,message,answers,setMode})
+         contextUsage editMessage regenerate switchVariant(convId,slotId,k) rewind(convId,msgId,{code,conversation,dryRun}) setPinned search
+         listServerSessions importServerSession(file) reattachAll applyLiveSettings(prev,next) refreshClaudeInfo stats toMarkdown delete
+    事件: conversation / conv-meta{context,suggestion,run,running} / message / conversation-reload / run-state / rate-limits / claude-info / slash-commands; 'notify' 单独事件
+    消息字段: user{status pending|translating|queued|sent|cancelled|error, images[{file,mediaType}], wire, slotId}; assistant{forUser,lastUuid,retry,statusText}
+    块: permission{kind tool|question|plan, requestId, status pending|allowed|always|denied|cancelled, suggestions, zh, plan, planZh, descriptionZh}
+        tool_use{structured{structuredPatch,content,type}, sub[], task{status,summary,...}}
+    conv.slots[slotId]={versions:[{messages,sessionId}|null], current}
+[x] main.js/preload 接线完成：新增 remote-fs.js(SFTP) customize.js desktop-mcp.js(Windows-MCP 代理, 工具名 desktop_*)；删除 claude-runner.js
+    preload 新 API 见 src/preload/preload.js；附件 URL: app://bundle/attachments/<file>；多窗口 #conv=<id>；'open-conv' 事件；终端 term:*
+[ ] 渲染层大改（下一步）：app.js 拆模块？—— 计划：renderer/app.js(核心) + render-blocks.js(权限卡/diff/待办/子代理) + panels.js(终端/文件/自定义/会话导入)
+[ ] 渲染：diff、待办、子代理、上下文详情+压缩、用量额度、提示建议、图片、编辑重发/重新生成/分叉、回退
+[ ] 会话：导入服务器会话、置顶、worktree、全文搜索
+[ ] 自定义页：指令/记忆/技能/子代理/输出风格/插件/连接器/权限规则/Hooks（SFTP）
+[ ] 系统：通知、内置终端(xterm)、文件浏览器、Cowork(Windows-MCP)、登录、更新、多窗口
+
+== 补充 ==
+rate_limit_event.rate_limit_info: {status allowed|allowed_warning|rejected, resetsAt(秒), rateLimitType five_hour|seven_day|..., utilization(0-1),
+  unifiedWindows:{five_hour:{utilization,resetsAt}, seven_day:{...}}}；API Key 会话没有。get_usage 返回 rate_limits(同结构或 null)
+Fast mode：SDK 模式下不可用（"Fast mode is not available in the Agent SDK"）→ 只显示说明
+分叉：--resume SID --resume-session-at <上一条链条目 uuid> --fork-session → 新 session，不含之后的消息（已验证）
+检查点：env CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1；rewind_files 在 resume 后的新进程里也可用（已验证）
+子代理：task_started{task_id,tool_use_id,description,subagent_type,is_backgrounded} / task_updated{patch.status} / task_notification{status,summary}
+  parent_tool_use_id 消息很少（后台子代理）
+运行宿主（WSL 已验证）：exec 3< <(exec tail -n +1 -F in.jsonl); claude <&3 >> out.jsonl；看门狗空闲后 kill tail → claude 正常退出 → 写 bridge_exit 行
+uv/uvx 在本机可用（hermes\bin）；@xterm/xterm 6.0.0, @xterm/addon-fit 0.11.0

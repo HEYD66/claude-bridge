@@ -1,0 +1,41 @@
+{
+  "name": "claude-bridge",
+  "productName": "Claude Bridge",
+  "version": "0.1.0",
+  "description": "在 Windows 本机通过 SSH 控制 VPS 上的 Claude Code，并通过反向隧道 + MCP 让服务器上的 Claude 操作本机文件，内置中英双向翻译。",
+  "main": "src/main/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
+    "dompurify": "3.4.17",
+    "marked": "18.1.1",
+    "ssh2": "1.17.0"
+  },
+  "devDependencies": {
+    "electron": "45.0.0",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "local.claude-bridge",
+    "productName": "Claude Bridge",
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

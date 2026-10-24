@@ -1,0 +1,2 @@
+# 在服务器 / WSL 上执行的脚本必须保持 LF
+*.sh text eol=lf

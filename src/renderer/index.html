@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Claude Bridge</title>
+    <link rel="stylesheet" href="/node_modules/@xterm/xterm/css/xterm.css" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app" id="app">
+      <aside class="sidebar" id="sidebar" aria-label="侧边栏">
+        <div class="side-top drag">
+          <button class="icon-btn" id="btn-menu" title="菜单" aria-label="菜单" aria-haspopup="menu" data-icon="menu"></button>
+          <button class="icon-btn" id="btn-collapse" title="收起侧边栏 (Ctrl+B)" aria-label="收起侧边栏" data-icon="sidebar"></button>
+          <button class="icon-btn" id="btn-back" title="后退 (Alt+←)" aria-label="后退" data-icon="arrowLeft"></button>
+          <button class="icon-btn" id="btn-forward" title="前进 (Alt+→)" aria-label="前进" data-icon="arrowRight"></button>
+        </div>
+
+        <div class="mode-seg" role="tablist" aria-label="模式">
+          <button role="tab" id="mode-cowork" data-mode="cowork"><span data-icon="cowork"></span><span>Cowork</span></button>
+          <button role="tab" id="mode-code" data-mode="code"><span data-icon="code"></span><span>Code</span></button>
+        </div>
+
+        <nav class="side-nav" aria-label="主导航">
+          <button class="nav-item" id="btn-new-chat" title="新对话 (Ctrl+N)"><span data-icon="plus"></span><span>新对话</span></button>
+          <button class="nav-item" id="btn-customize"><span data-icon="briefcase"></span><span>自定义</span></button>
+          <button class="nav-item" id="btn-more" aria-expanded="false"><span class="more-chevron" data-icon="chevronRight"></span><span>更多</span></button>
+          <div class="more-list" id="more-list" hidden>
+            <button class="nav-item sub" id="btn-more-import"><span data-icon="download"></span><span>导入服务器上的会话</span></button>
+            <button class="nav-item sub" id="btn-more-files"><span data-icon="folderOpen"></span><span>服务器文件</span></button>
+            <button class="nav-item sub" id="btn-more-activity"><span data-icon="list"></span><span>本机操作记录</span></button>
+            <button class="nav-item sub" id="btn-more-folders"><span data-icon="monitor"></span><span>本机访问与桌面控制</span></button>
+            <button class="nav-item sub" id="btn-more-window"><span data-icon="external"></span><span>新窗口</span></button>
+          </div>
+        </nav>
+
+        <div class="side-search" id="side-search" hidden>
+          <input type="text" id="search-input" placeholder="搜索对话标题和内容" aria-label="搜索对话" spellcheck="false" />
+        </div>
+        <div class="conv-groups" id="conv-groups"></div>
+
+        <div class="side-bottom">
+          <button class="account" id="account" aria-haspopup="menu"></button>
+        </div>
+      </aside>
+
+      <main class="main is-home" id="main">
+        <header class="topbar drag">
+          <button class="icon-btn" id="btn-expand" title="展开侧边栏 (Ctrl+B)" aria-label="展开侧边栏" data-icon="sidebar"></button>
+          <div class="conv-head" id="conv-head"></div>
+          <div class="head-actions" id="head-actions">
+            <button class="icon-btn" id="btn-terminal" title="终端 (Ctrl+`)" aria-label="终端" data-icon="terminal"></button>
+            <button class="icon-btn" id="btn-export" title="导出对话为 Markdown" aria-label="导出对话" data-icon="download"></button>
+            <button class="icon-btn" id="btn-activity" title="本机操作记录" aria-label="本机操作记录" data-icon="list"></button>
+            <button class="icon-btn" id="btn-files" title="服务器文件" aria-label="服务器文件" data-icon="folder"></button>
+          </div>
+        </header>
+
+        <section class="chat" id="chat">
+          <div class="home" id="home">
+            <h1 class="greeting"><span id="greet-logo"></span><span id="greet-text"></span></h1>
+            <div class="starters" id="starters" hidden></div>
+            <div class="stats" id="stats"></div>
+          </div>
+          <div class="messages" id="messages" aria-live="polite"></div>
+        </section>
+
+        <section class="term-panel" id="term-panel" hidden aria-label="终端">
+          <div class="term-head">
+            <span id="term-title">终端</span>
+            <span class="spacer"></span>
+            <button class="icon-btn sm" id="btn-term-restart" title="重新打开" aria-label="重新打开终端" data-icon="refresh"></button>
+            <button class="icon-btn sm" id="btn-term-close" title="关闭" aria-label="关闭终端" data-icon="x"></button>
+          </div>
+          <div class="term-host" id="term-host"></div>
+        </section>
+
+        <footer class="composer-wrap">
+          <div class="todo-bar" id="todo-bar" hidden></div>
+          <div class="suggest" id="suggest" hidden></div>
+          <div class="chips" id="chips"></div>
+          <div class="composer" id="composer">
+            <span class="crab-wrap" id="crab"></span>
+            <div class="slash-pop" id="slash-pop" role="listbox" hidden></div>
+            <div class="attach-row" id="attach-row" hidden></div>
+            <div class="composer-row">
+              <textarea id="input" rows="1" aria-label="消息输入框"></textarea>
+              <button class="send-btn stop" id="btn-stop" title="停止 (Esc)" aria-label="停止" hidden></button>
+              <button class="send-btn" id="btn-send" aria-label="发送"></button>
+            </div>
+          </div>
+          <div class="composer-meta">
+            <div class="meta-left">
+              <button class="meta-btn" id="btn-perm" aria-haspopup="menu"></button>
+              <button class="meta-btn" id="btn-translate" aria-pressed="true"></button>
+            </div>
+            <div class="meta-right">
+              <button class="meta-btn" id="btn-model" aria-haspopup="menu"></button>
+              <button class="meta-btn" id="btn-effort" aria-haspopup="menu"></button>
+              <button class="ctx-ring" id="ctx-ring" aria-haspopup="dialog"></button>
+            </div>
+          </div>
+        </footer>
+      </main>
+
+      <aside class="drawer" id="files" hidden aria-label="服务器文件">
+        <div class="activity-head">
+          <span>服务器文件</span>
+          <div>
+            <button class="icon-btn sm" id="btn-files-home" title="回到工作目录" data-icon="server"></button>
+            <button class="icon-btn sm" id="btn-files-refresh" title="刷新" data-icon="refresh"></button>
+            <button class="icon-btn sm" id="btn-files-close" title="关闭" data-icon="x"></button>
+          </div>
+        </div>
+        <div class="files-bar"><span class="files-path" id="files-path"></span><label class="check-line"><input type="checkbox" id="files-hidden" />隐藏文件</label></div>
+        <div class="activity-list" id="files-list"></div>
+      </aside>
+
+      <aside class="drawer" id="activity" hidden aria-label="本机操作记录">
+        <div class="activity-head">
+          <span>本机操作记录</span>
+          <div>
+            <button class="icon-btn sm" id="btn-activity-clear" title="清空" data-icon="trash"></button>
+            <button class="icon-btn sm" id="btn-activity-close" title="关闭" data-icon="x"></button>
+          </div>
+        </div>
+        <div class="activity-list" id="activity-list"></div>
+      </aside>
+    </div>
+
+    <div id="menu-root"></div>
+    <div id="modal-root"></div>
+    <div id="toast-root" aria-live="assertive"></div>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
