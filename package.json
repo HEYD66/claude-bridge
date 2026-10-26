@@ -5,6 +5,12 @@
   "description": "在 Windows 本机通过 SSH 控制 VPS 上的 Claude Code，并通过反向隧道 + MCP 让服务器上的 Claude 操作本机文件，内置中英双向翻译。",
   "main": "src/main/main.js",
   "private": true,
+  "author": "HEYD66",
+  "homepage": "https://github.com/HEYD66/claude-bridge",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HEYD66/claude-bridge.git"
+  },
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win"
@@ -23,19 +29,40 @@
   "build": {
     "appId": "local.claude-bridge",
     "productName": "Claude Bridge",
+    "copyright": "Copyright © 2026 HEYD66",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
     "files": [
       "src/**/*",
       "package.json"
     ],
+    "npmRebuild": false,
+    "publish": null,
     "win": {
+      "icon": "build/icon.png",
       "target": [
-        "nsis",
-        "portable"
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
       ]
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Claude Bridge",
+      "artifactName": "Claude-Bridge-Setup-${version}.exe"
+    },
+    "portable": {
+      "artifactName": "Claude-Bridge-${version}-portable.exe"
     }
   }
 }
