@@ -3661,7 +3661,7 @@ textarea.perm-msg {
 .chart-x {
   display: flex;
   justify-content: space-around;
-  gap: 6%;
+  gap: min(6%, 12px);
   padding: 0 4%;
 }
 
@@ -3694,10 +3694,13 @@ textarea.perm-msg {
   color: var(--muted);
 }
 
+/* 与柱子同宽，文字比柱子宽时向两边溢出、保持居中 */
 .chart-x span {
   flex: 1;
+  min-width: 0;
   max-width: 76px;
-  text-align: center;
+  display: flex;
+  justify-content: center;
   white-space: nowrap;
 }
 

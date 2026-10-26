@@ -590,7 +590,9 @@ function renderModelChart(box, s) {
     const plot = h('div', { class: 'chart-plot' }, ticks.slice(1).map((t) => h('div', { class: 'gl', style: `bottom:${(t / top) * 100}%` })));
     const bars = h('div', { class: 'chart-bars' });
     const labels = h('div', { class: 'chart-x', 'aria-hidden': 'true' });
-    for (const d of days) {
+    // 柱子多时隔几个才标一次日期，避免文字挤在一起
+    const every = Math.ceil(days.length / 7);
+    days.forEach((d, i) => {
       const [, mo, dd] = d.date.split('-').map(Number);
       const col = h('div', { class: 'chart-bar', title: `${mo}月${dd}日：${fmtTokens(d.total)} tokens` });
       // 用量大的模型放在最下面
@@ -599,8 +601,8 @@ function renderModelChart(box, s) {
         if (v) col.append(h('span', { style: `height:${(v / top) * 100}%;background:${color.get(m.model)}`, title: `${modelName(m.model)}：${fmtTokens(v)}` }));
       }
       bars.append(col);
-      labels.append(h('span', {}, `${mo}月${dd}日`));
-    }
+      labels.append(h('span', {}, (days.length - 1 - i) % every === 0 ? `${mo}月${dd}日` : ''));
+    });
     plot.append(bars);
     box.append(h('div', { class: 'chart', role: 'img', 'aria-label': `最近 ${days.length} 个有用量的日期的 token 用量` }, yAxis, plot), labels);
   }

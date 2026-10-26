@@ -579,7 +579,11 @@ function renderPermission(b) {
     let extra = '';
     if (b.kind === 'question' && b.answers) extra = `：${Object.values(b.answers).join('；')}`;
     if (b.status === 'denied' && b.denyMessage) extra = `：${b.denyMessage}`;
-    const label = b.kind === 'plan' ? (b.status === 'denied' ? '计划：继续规划' : '计划已批准') : b.kind === 'question' ? `回答了 Claude 的问题${extra}` : `${resolvedLabel[b.status] || b.status} · ${d.label}${extra}`;
+    let label;
+    if (b.status === 'cancelled') label = b.kind === 'plan' ? '计划审批已失效' : b.kind === 'question' ? 'Claude 的提问已失效' : `已失效 · ${d.label}`;
+    else if (b.kind === 'plan') label = b.status === 'denied' ? '计划：继续规划' : '计划已批准';
+    else if (b.kind === 'question') label = b.status === 'denied' ? '跳过了 Claude 的问题' : `回答了 Claude 的问题${extra}`;
+    else label = `${resolvedLabel[b.status] || b.status} · ${d.label}${extra}`;
     const done = h('div', { class: `perm-done ${b.status}` }, svg(b.status === 'denied' ? 'x' : b.status === 'cancelled' ? 'alert' : 'check', 13), label);
     if (!b.sentEn) return done;
     // 理由 / 答案经过翻译：可以展开查看实际发给 Claude 的英文

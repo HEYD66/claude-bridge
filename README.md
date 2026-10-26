@@ -8,6 +8,33 @@
 
 > 本项目与 Anthropic 无关，不是官方产品。“Claude”是 Anthropic 的商标。使用时需要遵守 Anthropic 的使用条款。
 
+## 截图
+
+> 截图里的服务器、项目和对话都是演示数据，由 [`scripts/screenshots.js`](scripts/screenshots.js) 生成。
+
+![对话：工具调用和 diff](docs/screenshots/chat.png)
+
+![右侧面板：内置浏览器预览本机启动的开发服务器，下方是 Git 改动](docs/screenshots/dock.png)
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/home.png" alt="首页：用量统计"></td>
+    <td><img src="docs/screenshots/models-light.png" alt="首页：按模型统计的 token 用量（浅色主题）"></td>
+  </tr>
+  <tr>
+    <td align="center">首页统计</td>
+    <td align="center">模型用量（浅色主题）</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/plan.png" alt="计划审批卡片"></td>
+    <td><img src="docs/screenshots/question-light.png" alt="Claude 的提问卡片（浅色主题）"></td>
+  </tr>
+  <tr>
+    <td align="center">计划审批</td>
+    <td align="center">Claude 的提问（浅色主题）</td>
+  </tr>
+</table>
+
 ## 下载
 
 到 [Releases](https://github.com/HEYD66/claude-bridge/releases) 下载：
