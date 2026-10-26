@@ -156,7 +156,7 @@ export function modelName(id) {
 
 export function workdirName(wd) {
   const v = String(wd || '~').trim().replace(/\/+$/, '');
-  if (!v || v === '~') return '~';
+  if (!v || v === '~') return '主目录';
   return v.split('/').pop() || v;
 }
 

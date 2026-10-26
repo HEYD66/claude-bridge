@@ -61,7 +61,7 @@ fs.writeFileSync(path.join(dir, 'attachments', 'sample.png'), png);
 // ---- 设置 / 额度 ----
 fs.writeFileSync(
   path.join(dir, 'settings.json'),
-  JSON.stringify({ ssh: { host: 'vps.example.com', port: 22, username: 'dev', authType: 'password' }, mcp: { enabled: true, roots: ['D:\\Docs'] }, ui: { theme } }),
+  JSON.stringify({ ssh: { host: 'vps.example.com', port: 22, username: 'dev', authType: 'password' }, mcp: { enabled: true, roots: ['D:\\Docs'] }, ui: { theme, displayName: '小明' } }),
 );
 fs.writeFileSync(
   path.join(dir, 'meta.json'),
@@ -141,6 +141,19 @@ const convA = save({
         text('a2-0', 'I will run the test suite.', '我来运行测试套件。'),
         {
           type: 'permission',
+          key: 'a2-x',
+          kind: 'tool',
+          requestId: 'r0',
+          toolName: 'Bash',
+          displayName: 'Bash',
+          input: { command: 'rm -rf build' },
+          suggestions: [],
+          status: 'denied',
+          denyMessage: '先别删，确认一下 build 目录里有什么',
+          sentEn: "Don't delete it yet, check what's in the build directory first",
+        },
+        {
+          type: 'permission',
           key: 'a2-1',
           kind: 'tool',
           requestId: 'r1',
@@ -149,6 +162,8 @@ const convA = save({
           input: { command: 'npm test', description: 'Run the test suite' },
           description: 'Run the test suite',
           descriptionZh: '运行测试套件',
+          decisionReason: "Quoted text in this command can't be checked before it runs",
+          decisionReasonZh: '命令中引号内的文本无法在运行前检查',
           suggestions: [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'npm test' }], behavior: 'allow', destination: 'localSettings' }],
           status: 'pending',
         },
@@ -342,9 +357,14 @@ async function run(w) {
   await sleep(1800);
   await shot('01-home');
   await report('sidebar groups', `return [...document.querySelectorAll('.group-head .group-name')].map((x) => x.textContent)`);
+  await report('display name', `return { account: document.querySelector('#account .account-text').textContent, greet: document.querySelector('#greet-text').textContent }`);
 
   await js(`[...document.querySelectorAll('.seg button')].find((b) => b.textContent === '额度').click()`);
   await shot('02-home-limits');
+  await js(`[...document.querySelectorAll('.seg button')].find((b) => b.textContent === '模型').click()`);
+  await sleep(300);
+  await report('models chart', `return { bars: document.querySelectorAll('.chart-bar').length, legend: [...document.querySelectorAll('.legend-row')].map((x) => x.textContent) }`);
+  await shot('02b-home-models');
 
   await clickConv('修复登录接口的空指针');
   await sleep(600);
@@ -355,6 +375,33 @@ async function run(w) {
   await js(`document.querySelector('#chat').scrollTop = 900;`);
   await shot('05-conv-a-middle');
 
+  await report('perm card zh reason + sentEn', `const r = document.querySelector('.perm-card .perm-reason'); const s = document.querySelector('.perm-sent'); return { reason: r && r.textContent, reasonTitle: r && r.title, sent: s && s.querySelector('summary').textContent, wrap: !!document.querySelector('.perm-done-wrap .perm-done.denied') }`);
+  // 连点“允许”：第一次点击后卡片立即禁用；没有服务器所以会报错，之后恢复可用
+  await js(`const b = document.querySelector('.perm-card .btn.primary'); b.click(); window.__busy1 = document.querySelector('.perm-card').classList.contains('busy') && b.disabled; b.click();`);
+  await sleep(1500);
+  await report('perm busy guard', `return { busyAfterClick: window.__busy1, reEnabled: !document.querySelector('.perm-card .btn.primary').disabled && !document.querySelector('.perm-card').classList.contains('busy'), errorToasts: document.querySelectorAll('#toast-root .toast.error').length }`);
+  await js(`document.querySelector('.perm-sent summary').click()`);
+  await shot('05b-perm-sent');
+  // 右侧停靠区：同时打开改动、文件、操作记录
+  await js(`document.querySelector('#btn-changes').click(); document.querySelector('#btn-files').click(); document.querySelector('#btn-activity').click();`);
+  await sleep(300);
+  await report('dock', `return { dock: !document.querySelector('#dock').hidden, on: [...document.querySelectorAll('.dock-toggle.on')].map((b) => b.id), panels: [...document.querySelectorAll('.dock-panel:not([hidden])')].map((p) => p.id), changes: document.querySelector('#changes-list').textContent }`);
+  await shot('05c-dock');
+  // 左右并排 / 最大化
+  await js(`document.querySelector('#btn-dock-layout').click()`);
+  await sleep(300);
+  await report('dock row', `const d = document.querySelector('#dock'); return { row: d.classList.contains('row'), width: Math.round(d.getBoundingClientRect().width), dir: getComputedStyle(d.querySelector('.dock-panels')).flexDirection }`);
+  await shot('05d-dock-row');
+  await js(`document.querySelector('#files .panel-max').click()`);
+  await sleep(200);
+  await report('dock max', `return { visible: [...document.querySelectorAll('.dock-panel')].filter((p) => p.offsetParent).map((p) => p.id) }`);
+  await shot('05e-dock-max');
+  await js(`document.querySelector('#files .panel-max').click(); document.querySelector('#btn-dock-layout').click();`);
+  await sleep(200);
+  await report('dock restored', `return { row: document.querySelector('#dock').classList.contains('row'), visible: [...document.querySelectorAll('.dock-panel')].filter((p) => p.offsetParent).map((p) => p.id) }`);
+  await js(`document.querySelector('#btn-changes').click(); document.querySelector('#btn-files').click(); document.querySelector('#btn-activity').click();`);
+  await sleep(200);
+  await report('dock closed', `return { dock: !document.querySelector('#dock').hidden, on: document.querySelectorAll('.dock-toggle.on').length }`);
   await js(`document.querySelector('#ctx-ring').click()`);
   await shot('06-ctx-popover');
   await js(`document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))`);

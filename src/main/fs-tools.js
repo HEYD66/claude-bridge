@@ -155,6 +155,95 @@ const TOOL_DEFS = {
     },
     command: true,
   },
+
+  // ---- 本机后台进程（开发服务器等） ----
+  start_process: {
+    description:
+      "Start a long-running PowerShell command in the background on the user's local Windows PC — dev servers (npm run dev, vite, python -m http.server), watchers, etc. Returns right away with a process id plus the first output; local URLs it prints (e.g. http://localhost:5173) are detected. " +
+      'Use this instead of run_command for anything that does not exit by itself. Then use read_process_output for logs, browser_navigate to preview, and stop_process when done.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        command: P('PowerShell command, e.g. "npm run dev"'),
+        cwd: P('Working directory (must be inside a shared folder; default: first shared folder)'),
+        name: P('Short label shown to the user, e.g. "vite dev server"'),
+      },
+      required: ['command'],
+    },
+    process: true,
+  },
+  read_process_output: {
+    description: 'Read the latest output (stdout + stderr) of a background process started with start_process.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: P('Process id returned by start_process'), lines: { type: 'integer', minimum: 1, maximum: 2000, description: 'Number of last lines (default 80)' } },
+      required: ['id'],
+    },
+    process: true,
+    readOnly: true,
+  },
+  list_processes: {
+    description: 'List background processes started with start_process on the user\'s PC, with status and detected URLs.',
+    inputSchema: { type: 'object', properties: {} },
+    process: true,
+    readOnly: true,
+  },
+  stop_process: {
+    description: 'Stop a background process (and its child processes) started with start_process.',
+    inputSchema: { type: 'object', properties: { id: P('Process id') }, required: ['id'] },
+    process: true,
+  },
+
+  // ---- 内置浏览器 ----
+  browser_navigate: {
+    description:
+      "Open a URL in Claude Bridge's built-in browser on the user's PC (shown to the user in a side panel). Use it to preview local apps such as http://localhost:3000 started with start_process. " +
+      'Pass url, or action = back / forward / reload. Opening non-local websites may ask the user first.',
+    inputSchema: {
+      type: 'object',
+      properties: { url: P('URL to open; "localhost:3000" is accepted'), action: { type: 'string', enum: ['back', 'forward', 'reload'], description: 'Navigate history instead of opening a URL' } },
+    },
+    browser: true,
+  },
+  browser_snapshot: {
+    description:
+      'Read the page currently shown in the built-in browser: title, URL, visible text and a numbered list of interactive elements like "[3] <button> Sign in". Use the numbers as ref for browser_click / browser_type. Take a new snapshot after the page changes.',
+    inputSchema: { type: 'object', properties: { max_chars: { type: 'integer', minimum: 500, maximum: 50000, description: 'Max characters of page text (default 8000)' } } },
+    browser: true,
+    readOnly: true,
+  },
+  browser_click: {
+    description: 'Click an element in the built-in browser (real mouse click). Identify it by ref from browser_snapshot, or by a CSS selector.',
+    inputSchema: { type: 'object', properties: { ref: { type: 'integer', description: 'Element number from browser_snapshot' }, selector: P('CSS selector (if no ref)') } },
+    browser: true,
+  },
+  browser_type: {
+    description: 'Type text into an element of the built-in browser (clicks it first to focus). Optionally clear the field first and press Enter afterwards.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ref: { type: 'integer', description: 'Element number from browser_snapshot' },
+        selector: P('CSS selector (if no ref)'),
+        text: P('Text to type'),
+        clear: { type: 'boolean', description: 'Select all and delete existing text first' },
+        submit: { type: 'boolean', description: 'Press Enter after typing' },
+      },
+      required: ['text'],
+    },
+    browser: true,
+  },
+  browser_screenshot: {
+    description: 'Take a screenshot of the page in the built-in browser (what the user sees).',
+    inputSchema: { type: 'object', properties: {} },
+    browser: true,
+    readOnly: true,
+  },
+  browser_console: {
+    description: 'Get recent console messages, JavaScript errors and failed page loads from the built-in browser — useful for debugging a local web app.',
+    inputSchema: { type: 'object', properties: { clear: { type: 'boolean', description: 'Clear the log after reading' } } },
+    browser: true,
+    readOnly: true,
+  },
 };
 
 const DESKTOP_PREFIX = 'desktop_';
@@ -264,11 +353,13 @@ class LocalTools extends EventEmitter {
    * @param {(req: object) => Promise<boolean>} opts.confirm  请求用户确认写操作
    * @param {import('./desktop-mcp').DesktopMcp} [opts.desktop] Windows 桌面控制
    */
-  constructor({ getSettings, confirm, desktop }) {
+  constructor({ getSettings, confirm, desktop, procs, browser }) {
     super();
     this.getSettings = getSettings;
     this.confirm = confirm;
     this.desktop = desktop || null;
+    this.procs = procs || null; // 本机后台进程（local-procs.js）
+    this.browser = browser || null; // 内置浏览器（browser-host.js）
   }
 
   _mcp() {
@@ -285,7 +376,9 @@ class LocalTools extends EventEmitter {
     const s = this._mcp();
     const tools = Object.entries(TOOL_DEFS)
       .filter(([, d]) => {
-        if (d.command) return s.allowCommands && !s.readOnly;
+        // 后台进程和执行命令同一个开关
+        if (d.command || d.process) return s.allowCommands && !s.readOnly && (!d.process || !!this.procs);
+        if (d.browser) return s.browser !== false && !!this.browser;
         return d.readOnly || !s.readOnly;
       })
       .map(([name, d]) => ({
@@ -722,6 +815,130 @@ class LocalTools extends EventEmitter {
     });
   }
 
+  // ---- 本机后台进程 ----
+
+  _procInfo(p) {
+    const status = p.status === 'running' ? 'running' : `${p.status}${p.exitCode != null ? ` (exit code ${p.exitCode})` : ''}`;
+    return [`Process ${p.id} "${p.name}" — ${status}, PID ${p.pid || '?'}`, `Working directory: ${p.cwd}`, p.urls.length ? `Detected URLs: ${p.urls.join(', ')}` : null].filter(Boolean).join('\n');
+  }
+
+  async _start_process({ command, cwd, name }) {
+    if (!command || typeof command !== 'string') throw new ToolError('command is required');
+    const dir = await this._resolve(cwd, { allowDefault: true });
+    if (this._mcp().confirmCommands) {
+      await this._confirmOrThrow({ kind: 'command', title: 'Claude 想要在本机后台启动进程', command, cwd: dir });
+    }
+    const p = this.procs.start({ command, cwd: dir, name });
+    // 等一会儿，拿到启动时的输出（以及开发服务器打印的网址）
+    for (let i = 0; i < 16 && p.status === 'running' && !p.urls.length; i++) await new Promise((r) => setTimeout(r, 250));
+    if (p.urls.length) await new Promise((r) => setTimeout(r, 300));
+    const { text } = this.procs.tail(p.id, 40);
+    const tip = p.status === 'running' ? 'It keeps running in the background. Use read_process_output for more logs and stop_process to stop it.' : 'The process has already exited — check the output above.';
+    return `${this._procInfo(p)}\n${tip}\n--- output so far ---\n${text.trim() || '(no output yet)'}`;
+  }
+
+  async _read_process_output({ id, lines }) {
+    const { proc, text, truncated } = this.procs.tail(id, parseInt(lines, 10) || 80);
+    return `${this._procInfo(proc)}\n--- last output${truncated ? ' (truncated)' : ''} ---\n${text.trim() || '(no output)'}`;
+  }
+
+  async _list_processes() {
+    const list = this.procs.list();
+    if (!list.length) return 'No background processes have been started.';
+    return list.map((p) => `${p.id}  ${p.status}${p.exitCode != null ? `(${p.exitCode})` : ''}  ${p.name}${p.urls.length ? `  ${p.urls.join(' ')}` : ''}`).join('\n');
+  }
+
+  async _stop_process({ id }) {
+    const p = this.procs.stop(id);
+    return `Stopped process ${p.id} "${p.name}".`;
+  }
+
+  // ---- 内置浏览器 ----
+
+  async _browser_navigate({ url, action }) {
+    const { normalizeUrl, isLocalUrl } = require('./browser-host');
+    const g = await this.browser.ensure();
+    const nav = g.navigationHistory;
+    if (action === 'back' || action === 'forward' || action === 'reload') {
+      const done = new Promise((r) => {
+        const t = setTimeout(r, 15000);
+        g.once('did-stop-loading', () => {
+          clearTimeout(t);
+          r();
+        });
+      });
+      if (action === 'reload') g.reload();
+      else if (action === 'back') {
+        if (!(nav ? nav.canGoBack() : g.canGoBack())) return 'There is no previous page.';
+        nav ? nav.goBack() : g.goBack();
+      } else {
+        if (!(nav ? nav.canGoForward() : g.canGoForward())) return 'There is no next page.';
+        nav ? nav.goForward() : g.goForward();
+      }
+      await done;
+      return `Now at: ${g.getTitle() || '(no title)'} — ${g.getURL()}`;
+    }
+    let target;
+    try {
+      target = normalizeUrl(url);
+    } catch (e) {
+      throw new ToolError(e.message);
+    }
+    // 本机地址直接打开；外部网站先问用户（可选“本次运行期间自动允许”）
+    if (!isLocalUrl(target)) await this._confirmOrThrow({ kind: 'browser', title: 'Claude 想在内置浏览器中打开网站', url: target });
+    const r = await this.browser.navigate(g, target);
+    if (r === 'ok') return `Loaded: ${g.getTitle() || '(no title)'} — ${g.getURL()}\nUse browser_snapshot to read the page or browser_screenshot to see it.`;
+    if (r === 'timeout') return `Still loading after 20s: ${g.getURL()}. Try browser_snapshot or browser_console.`;
+    throw new ToolError(`Failed to load ${target}: ${r}. If this is a local dev server, check it is running (list_processes / read_process_output).`);
+  }
+
+  async _browser_snapshot({ max_chars }) {
+    const g = await this.browser.ensure();
+    const s = await this.browser.snapshot(g, max_chars);
+    const parts = [`Title: ${s.title || '(no title)'}`, `URL: ${s.url}`, `Scroll: ${s.scroll.y} / ${s.scroll.height} (viewport ${s.scroll.viewport})`, '', `Interactive elements (${s.items.length}):`, s.items.join('\n') || '(none)', '', `Page text${s.truncated ? ' (truncated)' : ''}:`, s.text || '(empty)'];
+    return parts.join('\n');
+  }
+
+  async _locate(g, ref, selector) {
+    if (!ref && !selector) throw new ToolError('ref or selector is required');
+    const loc = await this.browser.locate(g, ref, selector);
+    if (loc.error) throw new ToolError(loc.error);
+    return loc;
+  }
+
+  async _browser_click({ ref, selector }) {
+    const g = await this.browser.ensure();
+    const loc = await this._locate(g, ref, selector);
+    await this.browser.click(g, loc.x, loc.y);
+    await new Promise((r) => setTimeout(r, 600));
+    return `Clicked ${ref ? `[${ref}]` : selector} <${loc.tag}>. Current URL: ${g.getURL()}\nTake a new browser_snapshot to see the result.`;
+  }
+
+  async _browser_type({ ref, selector, text, clear, submit }) {
+    if (typeof text !== 'string') throw new ToolError('text is required');
+    const g = await this.browser.ensure();
+    if (ref || selector) {
+      const loc = await this._locate(g, ref, selector);
+      await this.browser.click(g, loc.x, loc.y);
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    await this.browser.type(g, text, { clear: !!clear, submit: !!submit });
+    await new Promise((r) => setTimeout(r, submit ? 600 : 200));
+    return `Typed ${text.length} characters${submit ? ' and pressed Enter' : ''}. Current URL: ${g.getURL()}`;
+  }
+
+  async _browser_screenshot() {
+    const g = await this.browser.ensure();
+    const data = await this.browser.screenshot(g);
+    return { content: [{ type: 'image', data, mimeType: 'image/png' }, { type: 'text', text: `Screenshot of ${g.getURL()}` }] };
+  }
+
+  async _browser_console({ clear }) {
+    const g = await this.browser.ensure();
+    const logs = this.browser.consoleOf(g, { clear: !!clear });
+    if (!logs.length) return `No console messages for ${g.getURL()}.`;
+    return logs.map((l) => `[${l.level}] ${l.text}${l.source ? `  (${l.source})` : ''}`).join('\n');
+  }
 }
 
 async function realpathOfNearest(abs) {
@@ -754,6 +971,16 @@ const SUMMARY = {
   move_file: (a) => `移动 ${a.source || ''} → ${a.destination || ''}`,
   delete_file: (a) => `删除 ${a.path || ''}`,
   run_command: (a) => `执行命令 ${String(a.command || '').slice(0, 120)}`,
+  start_process: (a) => `后台启动 ${a.name ? `${a.name}：` : ''}${String(a.command || '').slice(0, 100)}`,
+  read_process_output: (a) => `查看进程输出 ${a.id || ''}`,
+  list_processes: () => '查看后台进程',
+  stop_process: (a) => `停止进程 ${a.id || ''}`,
+  browser_navigate: (a) => (a.action ? `浏览器 ${{ back: '后退', forward: '前进', reload: '刷新' }[a.action] || a.action}` : `浏览器打开 ${a.url || ''}`),
+  browser_snapshot: () => '浏览器 读取页面',
+  browser_click: (a) => `浏览器 点击 ${a.ref ? `[${a.ref}]` : a.selector || ''}`,
+  browser_type: (a) => `浏览器 输入 ${String(a.text || '').slice(0, 40)}`,
+  browser_screenshot: () => '浏览器 截图',
+  browser_console: () => '浏览器 查看控制台',
 };
 
 function summarize(name, args) {

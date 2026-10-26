@@ -38,6 +38,7 @@ const DEFAULT_SETTINGS = {
     confirmWrites: true,
     allowCommands: false,
     confirmCommands: true,
+    browser: true, // 允许 Claude 使用内置浏览器（打开本机网址不询问，外部网站先询问）
     desktop: false, // Windows-MCP 桌面控制
     desktopConfirm: 'risky', // all | risky | none
   },
@@ -56,6 +57,7 @@ const DEFAULT_SETTINGS = {
   },
   ui: {
     theme: 'system', // system | light | dark
+    displayName: '', // 左下角和问候语里的称呼；空 = 使用 Windows 用户名
   },
 };
 
@@ -179,6 +181,7 @@ class Store {
     merged.clientId = this.settings.clientId;
     merged.ssh.port = Math.min(65535, Math.max(1, parseInt(merged.ssh.port, 10) || 22));
     merged.mcp.roots = [...new Set((merged.mcp.roots || []).filter((r) => typeof r === 'string' && r.trim()))];
+    merged.ui.displayName = String(merged.ui.displayName || '').trim().slice(0, 40);
     this._writeSettings(merged);
     this.settings = merged;
     return this.getSettings();

@@ -14,7 +14,8 @@ const SERVER_NAME = 'local_pc';
 
 const INSTRUCTIONS =
   "Tools for the user's local Windows PC (connected through Claude Bridge). " +
-  'Paths are Windows paths. Call list_allowed_roots first to see which folders are shared; anything outside them is denied.';
+  'Paths are Windows paths. Call list_allowed_roots first to see which folders are shared; anything outside them is denied. ' +
+  'Run local projects on the PC: start_process for dev servers, browser_* tools to preview http://localhost pages in the built-in browser.';
 
 function rpcResult(id, result) {
   return { jsonrpc: '2.0', id, result };

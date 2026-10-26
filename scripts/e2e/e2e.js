@@ -1,11 +1,14 @@
 // 端到端测试：真实的 Claude Bridge 界面 + 主进程，经测试 SSH 服务器连到 WSL，
 // 服务器上运行 Linux 版 Claude Code，API 和翻译接口都由 mock-api.js 模拟。
 // 运行：npx electron scripts/e2e/e2e.js
-const { app } = require('electron');
+const { app, protocol } = require('electron');
+
+// main.js 要在异步的 setup() 之后才加载，那时已经 ready，所以 app:// 协议在这里提前注册（与 main.js 一致）
+protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { execFileSync } = require('child_process');
+const { execFile, execFileSync } = require('child_process');
 
 const DISTRO = 'Ubuntu-24.04-Analysis';
 const CLAUDE_BIN = '/opt/claude-test/package/claude';
@@ -38,6 +41,12 @@ console.error = (...a) => {
 
 function wsl(script) {
   return execFileSync('wsl.exe', ['-d', DISTRO, '--exec', 'env', `HOME=${H}`, 'bash', '-c', script], { encoding: 'utf8', windowsHide: true });
+}
+// 异步版本：命令里的 claude 会请求本进程中的 mock-api，同步执行会卡住事件循环、造成死锁
+function wslAsync(script) {
+  return new Promise((resolve, reject) => {
+    execFile('wsl.exe', ['-d', DISTRO, '--exec', 'env', `HOME=${H}`, 'bash', '-c', script], { encoding: 'utf8', windowsHide: true }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
+  });
 }
 function wslOk(script) {
   try {
@@ -72,10 +81,11 @@ async function setup() {
       `cat > ${H}/bin/claude <<'EOF'\n${wrapper}\nEOF`,
       `chmod +x ${H}/bin/claude`,
       `cd ${PROJ} && printf 'hello world\\nline two\\n' > hello.txt && git init -q -b main . && git add . && git -c user.name=t -c user.email=t@t commit -qm init`,
-      // 一个“在服务器终端里直接开的”会话，用来测试导入
-      `cd ${PROJ} && ${H}/bin/claude -p 'foreign session CMD:ECHO' --output-format text > ${H}/foreign.out 2>&1 || true`,
     ].join('\n'),
   );
+  // 一个“在服务器终端里直接开的”会话，用来测试导入
+  await wslAsync(`cd ${PROJ} && timeout 120 ${H}/bin/claude -p 'foreign session CMD:ECHO' --output-format text < /dev/null > ${H}/foreign.out 2>&1 || true`);
+  console.log(`foreign session: ${wsl(`head -c 200 ${H}/foreign.out`).trim()}`);
 
   const { startSshServer } = require('./ssh-wsl-server');
   srv = await startSshServer({ distro: DISTRO, home: H, log: (...a) => process.env.SSHLOG && console.log('[ssh]', ...a) });
@@ -84,7 +94,7 @@ async function setup() {
     path.join(userData, 'settings.json'),
     JSON.stringify({
       ssh: { host: '127.0.0.1', port: srv.port, username: 'root', authType: 'password', password: 'test', autoReconnect: true },
-      claude: { command: `${H}/bin/claude`, workdir: PROJ, model: '', effort: '', permissionMode: 'manual', usePromptTool: true, partialMessages: true, appendSystemPrompt: true, promptSuggestions: true, outputStyle: '', idleMinutes: 1, extraArgs: '' },
+      claude: { command: `${H}/bin/claude`, workdir: PROJ, model: '', effort: '', permissionMode: 'manual', usePromptTool: true, partialMessages: true, appendSystemPrompt: true, promptSuggestions: true, outputStyle: '', idleMinutes: 1, extraArgs: process.env.E2E_EXTRA_ARGS || '' },
       mcp: { enabled: true, roots: [shareDir], readOnly: false, confirmWrites: true, allowCommands: false, confirmCommands: true, desktop: false, desktopConfirm: 'risky' },
       notify: { done: false, permission: false },
       translation: { enabled: true, translateInput: true, translateOutput: true, provider: 'openai', openai: { baseUrl: `http://127.0.0.1:${mockPort}/v1`, apiKey: 'sk-mock', model: 'mock' } },
@@ -169,6 +179,15 @@ async function shot(name) {
   const img = await w.capturePage();
   fs.writeFileSync(path.join(shots, `${name}.png`), img.toPNG());
 }
+/** 主进程记录的服务器端隧道端口（meta.json → tunnelPorts） */
+function tunnelPort() {
+  try {
+    const ports = JSON.parse(fs.readFileSync(path.join(userData, 'meta.json'), 'utf8')).tunnelPorts || {};
+    return Object.values(ports)[0] || null;
+  } catch {
+    return null;
+  }
+}
 function convFileByTitle(title) {
   const dir = path.join(userData, 'conversations');
   for (const f of fs.readdirSync(dir)) {
@@ -179,6 +198,8 @@ function convFileByTitle(title) {
 }
 
 async function step(name, fn) {
+  // 调试：E2E_ONLY=<正则> 只跑匹配的步骤（连接步骤总是执行）
+  if (process.env.E2E_ONLY && !/SSH 连接/.test(name) && !new RegExp(process.env.E2E_ONLY).test(name)) return;
   try {
     await fn();
   } catch (e) {
@@ -226,11 +247,6 @@ async function run() {
     await shot('03-first-turn');
   });
 
-  await step('下一步建议', async () => {
-    const ok = await until(`!T.q('#suggest').hidden`, 15000);
-    check('下一步建议显示', ok, await js(`return T.q('#suggest').textContent`));
-  });
-
   await step('权限：允许', async () => {
     const before = await js('return T.sig()');
     await js(`return T.send('CMD:BASH:echo BASH_OK > e2e-bash.txt; cat e2e-bash.txt')`);
@@ -243,9 +259,17 @@ async function run() {
     check('允许后命令在服务器执行', ok && res.includes('BASH_OK') && wslOk(`test -f ${PROJ}/e2e-bash.txt`), res.slice(-120));
   });
 
+  // Claude Code 第一轮之后不生成下一步建议，所以放在第二轮之后检查
+  await step('下一步建议', async () => {
+    const ok = await until(`!T.q('#suggest').hidden`, 20000);
+    check('下一步建议显示', ok, await js(`return T.q('#suggest').textContent`));
+  });
+
   await step('权限：始终允许', async () => {
     const before = await js('return T.sig()');
-    await js(`return T.send('CMD:BASH:echo ALWAYS_OK')`);
+    // 必须是需要确认、且不带重定向的命令：单纯的 echo 会被当作只读命令直接放行，
+    // 重定向则会作为文件写入单独再问一次，不受这条 Bash 规则约束
+    await js(`return T.send('CMD:BASH:touch e2e-always.txt')`);
     await until(`T.q('#messages .perm-card:not(.question):not(.plan)')`, 60000);
     const hasAlways = await js(`return !!T.byText('#messages .perm-card .btn', '始终允许')`);
     if (hasAlways) await js(`T.click('#messages .perm-card .btn', '始终允许')`);
@@ -260,7 +284,7 @@ async function run() {
     check('始终允许写入权限规则', hasAlways && rules.includes('Bash'), rules.replace(/\s+/g, ' ').slice(0, 160));
     // 同一命令再执行一次不应再询问
     const b2 = await js('return T.sig()');
-    await js(`return T.send('CMD:BASH:echo ALWAYS_OK')`);
+    await js(`return T.send('CMD:BASH:touch e2e-always.txt')`);
     const asked = await until(`T.q('#messages .perm-card:not(.question):not(.plan)')`, 8000);
     if (asked) await js(`T.click('#messages .perm-card .btn.primary', '允许')`);
     await waitTurn(b2);
@@ -280,6 +304,10 @@ async function run() {
 
   await step('待办', async () => {
     const ok = await turn('CMD:TODO');
+    if ((await js('return T.lastText()')).includes('NO_TODO_TOOL')) {
+      console.log('SKIP  待办条（这个版本的 Claude Code 在 -p 模式下没有 TodoWrite / TaskCreate）');
+      return;
+    }
     const bar = await until(`!T.q('#todo-bar').hidden && T.q('#todo-bar').textContent.includes('Doing step two')`, 10000);
     check('待办条', ok && bar, await js(`return T.q('#todo-bar').textContent`));
   });
@@ -353,7 +381,9 @@ async function run() {
     await until('T.idle()', 30000);
     const before = await js('return T.sig()');
     await js(`T.lastAssistant().querySelector('button[title="重新生成"]').click()`);
-    const ok = await waitTurn(before);
+    // 重新生成的回复和原来一字不差（ECHO 同一条消息），T.sig() 可能不变，所以改为等版本号变成 3 / 3
+    const switched = await until(`(T.lastUser().querySelector('.variants') || {}).textContent === '3 / 3'`, 60000);
+    const ok = switched && (await waitTurn(before + '#'));
     const v = await js(`return (T.lastUser().querySelector('.variants') || {}).textContent || ''`);
     check('重新生成', ok && /^3 \/ 3$/.test(v), v);
   });
@@ -391,19 +421,35 @@ async function run() {
 
   await step('Ctrl+Enter 插话', async () => {
     await until('T.idle()', 30000);
+    // 等新一轮真的开始输出后再插话
+    const n0 = await js(`return T.qa('#messages .msg.assistant').length`);
     await js(`return T.send('CMD:SLOW')`);
-    await until(`T.lastText().includes('slow')`, 30000);
+    await until(`T.qa('#messages .msg.assistant').length > ${n0} && T.lastText().includes('slow')`, 30000);
     const before = await js('return T.sig()');
     await js(`return T.send('interject CMD:ECHO', true)`);
     const ok = await waitTurn(before, 60000);
     const text = await js('return T.lastText()');
+    const partial = await js(`const a = T.qa('#messages .msg.assistant'); const p = a[a.length - 2]; return p ? (p.querySelector('.msg-time') || {}).title || '' : ''`);
     check('Ctrl+Enter 立即插话', ok && text.includes('interject'), text.slice(0, 100));
+    check('被打断的回复保留已输出内容并标记停止', partial.includes('已停止'), partial);
+  });
+
+  await step('发送后马上插话', async () => {
+    await until('T.idle()', 30000);
+    const before = await js('return T.sig()');
+    await js(`T.send('CMD:SLOW quick'); T.send('quick interject CMD:ECHO', true); return true;`);
+    const ok = await waitTurn(before, 60000);
+    const stuck = await js(`return T.qa('#messages .msg.user .tr-note').some((x) => x.textContent.includes('已排队'))`);
+    const emptyStopped = await js(`return T.qa('#messages .msg.assistant').filter((a) => !a.querySelector('.block, .tool, .perm-card, .perm-done, .msg-error') && ((a.querySelector('.msg-time') || {}).title || '').includes('已停止')).length`);
+    check('发送后马上插话：不卡在排队、没有空的“已停止”', ok && !stuck && !emptyStopped, `stuck=${stuck} empty=${emptyStopped}`);
   });
 
   await step('断线后任务继续并自动接回', async () => {
     await until('T.idle()', 30000);
+    const n0 = await js(`return T.qa('#messages .msg.assistant').length`);
     await js(`return T.send('CMD:SLOW')`);
-    await until(`T.lastText().includes('slow')`, 30000);
+    await until(`T.qa('#messages .msg.assistant').length > ${n0} && T.lastText().includes('slow')`, 30000);
+    const portBefore = tunnelPort();
     srv.dropAll();
     const dropped = await until(`!T.q('#account .dot.connected')`, 10000);
     await shot('12-disconnected');
@@ -414,6 +460,12 @@ async function run() {
     const n = (text.match(/slow/g) || []).length;
     check('断线 → 自动重连', dropped && back);
     check('断线期间任务在服务器继续，重连后内容完整', done && n >= 40, `${n} 个 slow`);
+    // 重连后隧道端口不变，仍在运行的同一个 claude 进程还能访问本机
+    const portAfter = tunnelPort();
+    check('重连后隧道端口不变', portBefore && portBefore === portAfter, `${portBefore} → ${portAfter}`);
+    const ok = await turn(`CMD:MCP:list_directory ${JSON.stringify({ path: shareDir })}`);
+    const t = await js(`const a = T.lastAssistant(); const h = a.querySelector('.tool .tool-head'); if (h && !h.closest('.tool').classList.contains('open')) h.click(); await new Promise((r) => setTimeout(r, 150)); return a.textContent`);
+    check('重连后原 claude 进程仍能访问本机', ok && t.includes('a.txt') && !/ECONNREFUSED|fetch failed/i.test(t), t.slice(0, 200));
   });
 
   await step('内置终端', async () => {
@@ -433,13 +485,47 @@ async function run() {
   });
 
   await step('服务器文件', async () => {
+    wsl(`mkdir -p ${PROJ}/src/deep && printf 'needle inside\\n' > ${PROJ}/src/deep/found.txt`);
     await js(`T.click('#btn-files')`);
     const listed = await until(`T.byText('#files-list .file-item', 'hello.txt')`, 20000);
     await js(`T.byText('#files-list .file-item', 'hello.txt').click()`);
     const preview = await until(`(T.q('#modal-root .dialog.viewer .code-view') || {}).textContent && T.q('#modal-root .dialog.viewer .code-view').textContent.includes('hello world')`, 20000);
     await shot('14-files');
-    await js(`T.click('#modal-root .dialog .btn.primary', '关闭'); T.click('#btn-files-close');`);
+    await js(`T.click('#modal-root .dialog .btn.primary', '关闭')`);
     check('服务器文件浏览 + 预览（SFTP）', listed && preview);
+    // 树形展开
+    await js(`T.byText('#files-list .file-item.dir', 'src').click()`);
+    const expanded = await until(`T.byText('#files-list .file-item.dir', 'deep')`, 15000);
+    await js(`T.byText('#files-list .file-item.dir', 'deep').click()`);
+    const nested = await until(`T.byText('#files-list .file-item', 'found.txt')`, 15000);
+    check('文件树逐级展开', expanded && nested);
+    // 按文件名查找、按内容搜索
+    const filter = (v) => js(`const i = T.q('#files-filter'); i.value = ${JSON.stringify(v)}; i.dispatchEvent(new Event('input', { bubbles: true })); return true;`);
+    await filter('found');
+    const byName = await until(`T.byText('#files-list .file-item.search', 'found.txt')`, 20000);
+    await filter('?needle');
+    const byContent = await until(`T.byText('#files-list .file-item.search .fhit', 'needle inside')`, 20000);
+    await shot('14b-files-search');
+    await filter('');
+    check('文件按名称查找 / 以 ? 搜索内容', byName && byContent);
+    await js(`T.click('#btn-files-close')`);
+  });
+
+  await step('Git 改动面板', async () => {
+    await js(`T.click('#btn-changes')`);
+    const shown = await until(`T.qa('#changes-list .chg-item').length > 0`, 20000);
+    const names = await js(`return T.qa('#changes-list .chg-item').map((x) => x.textContent)`);
+    const untracked = names.some((t) => t.includes('e2e-bash.txt'));
+    await js(`T.byText('#changes-list .chg-item', 'e2e-bash.txt').click()`);
+    const diff = await until(`T.q('#modal-root .dialog .diff .dl.add')`, 20000);
+    await shot('14c-changes');
+    await js(`T.click('#modal-root .dialog .btn.primary', '关闭')`);
+    // 修改一个已跟踪文件，刷新后应显示 +/-
+    wsl(`cd ${PROJ} && printf 'hello world\\nline 2 changed\\n' > hello.txt`);
+    await js(`T.click('#btn-changes-refresh')`);
+    const modified = await until(`(T.byText('#changes-list .chg-item', 'hello.txt') || {}).textContent && T.byText('#changes-list .chg-item', 'hello.txt').textContent.includes('+1')`, 20000);
+    check('Git 改动面板：列出改动、查看 diff、统计增删', shown && untracked && diff && modified, names.slice(0, 4).join(' | '));
+    await js(`T.click('#btn-changes-close')`);
   });
 
   await step('自定义页', async () => {
@@ -505,6 +591,8 @@ function cleanup() {
     /* 忽略 */
   }
   try {
+    // 调试：E2E_KEEP=1 时把服务器端的运行目录（out.jsonl 等）保留到 /tmp/cbe2e-keep
+    if (process.env.E2E_KEEP) wsl(`rm -rf /tmp/cbe2e-keep; cp -r ${H}/.claude-bridge/runs /tmp/cbe2e-keep 2>/dev/null; true`);
     wsl(`pkill -f ${H} 2>/dev/null; sleep 1; rm -rf ${H}`);
   } catch {
     /* 忽略 */
@@ -513,10 +601,18 @@ function cleanup() {
 
 setup()
   .then(() => {
+    if (process.env.E2E_KEEP) {
+      // 运行结束后不删除服务器端运行目录，方便排查事件顺序
+      require('../../src/main/session-host').RemoteRun.prototype.remove = async function () {
+        this.detach();
+      };
+    }
     require('../../src/main/main.js');
     app.on('browser-window-created', (_e, win) => {
       if (w) return;
       w = win;
+      // 测试窗口被其它窗口挡住时 Chromium 会暂停重绘（xterm 靠 requestAnimationFrame 渲染），关掉后台节流
+      win.webContents.setBackgroundThrottling(false);
       win.webContents.on('console-message', (e) => {
         if (e.level === 'error' || e.level === 'warning') errors.push(`[renderer ${e.level}] ${e.message}`);
       });

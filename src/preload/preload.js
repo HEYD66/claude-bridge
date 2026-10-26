@@ -65,6 +65,10 @@ contextBridge.exposeInMainWorld('bridge', {
   rfsList: (p) => invoke('rfs:list', p),
   rfsRead: (p) => invoke('rfs:read', p),
   rfsHome: () => invoke('rfs:home'),
+  rfsFind: (root, q) => invoke('rfs:find', root, q),
+  rfsGrep: (root, q) => invoke('rfs:grep', root, q),
+  gitStatus: (workdir) => invoke('remote:gitStatus', workdir),
+  gitDiff: (root, file, opts) => invoke('remote:gitDiff', root, file, opts),
   customOverview: (workdir) => invoke('custom:overview', workdir),
   customRead: (p) => invoke('custom:read', p),
   customWrite: (p, content) => invoke('custom:write', p, content),
@@ -83,6 +87,12 @@ contextBridge.exposeInMainWorld('bridge', {
 
   // 桌面控制
   desktopStatus: () => invoke('desktop:status'),
+
+  // 内置浏览器 / 本机后台进程
+  browserServices: () => invoke('browser:services'),
+  procsList: () => invoke('procs:list'),
+  procsStop: (id) => invoke('procs:stop', id),
+  procsOutput: (id) => invoke('procs:output', id),
   desktopRestart: () => invoke('desktop:restart'),
 
   // 系统
@@ -111,4 +121,6 @@ contextBridge.exposeInMainWorld('bridge', {
   onOpenConv: subscribe('open-conv'),
   onTermData: subscribe('term:data'),
   onTermExit: subscribe('term:exit'),
+  onBrowserShow: subscribe('browser:show'),
+  onProcs: subscribe('procs'),
 });

@@ -30,7 +30,9 @@ import {
   lightbox,
 } from './core.js';
 import { renderMessage, renderTodos, latestTodos } from './messages.js';
-import { initTerminal, openTerminalPanel, initFiles, toggleFiles, contextPopover, renderRateLimits, importDialog, openCustomize } from './panels.js';
+import { initTerminal, openTerminalPanel, contextPopover, renderRateLimits, importDialog, openCustomize } from './panels.js';
+import { initDock, initFiles, initChanges, toggleFiles, toggleChanges, refreshChanges, syncDockRoot } from './dock.js';
+import { initBrowser, toggleBrowser } from './browser-panel.js';
 import { openSettings, EFFORT_OPTIONS, PERM_OPTIONS } from './settings.js';
 
 // 后退 / 前进历史（null 表示首页）
@@ -139,6 +141,9 @@ function buildAskDialog(req, done) {
       body.append(kv([['路径', p.path]]), h('p', {}, '文件会被移入回收站，可以从回收站恢复。'));
     } else if (kind === 'command') {
       body.append(kv([['目录', p.cwd]]), h('pre', {}, clip(p.command, 4000)));
+    } else if (kind === 'browser') {
+      body.append(h('p', {}, '服务器上的 Claude 想在内置浏览器里打开一个外部网站（打开本机网址不会询问）。浏览器使用独立的存储，不带你系统浏览器里的登录状态。'), kv([['网址', p.url]]));
+      alwaysText = '本次运行期间自动允许打开外部网站';
     } else if (kind.startsWith('desktop:')) {
       // Windows-MCP 桌面操作
       body.append(h('p', {}, '服务器上的 Claude 想要直接操作这台电脑的桌面。请确认参数无误后再允许。'), kv([['操作', p.desktopTool || kind.slice(8)]]));
@@ -180,32 +185,73 @@ function renderSidebar() {
     renderSearchResults(box, q);
     return;
   }
-  const list = convsForMode();
+  const list = sortConvs(convsForMode());
   if (!list.length) {
     box.append(h('div', { class: 'conv-empty' }, state.mode === 'cowork' ? '还没有 Cowork 任务' : '还没有对话'));
     return;
   }
+  const groups = [];
   const pinned = list.filter((c) => c.pinned);
   const rest = list.filter((c) => !c.pinned);
-  if (pinned.length) box.append(groupEl({ name: '已置顶', pin: true }, pinned));
-  if (state.mode === 'cowork') {
-    if (rest.length) box.append(groupEl({ name: '最近', onNew: () => newChat() }, rest));
-    return;
+  if (pinned.length) groups.push([{ name: '已置顶', pin: true }, pinned]);
+  if (state.mode === 'cowork' || viewPref('group') === 'none') {
+    if (rest.length) groups.push([{ name: state.mode === 'cowork' ? '最近' : '全部对话', onNew: () => newChat() }, rest]);
+  } else {
+    // Code 模式按服务器工作目录分组（相当于 Claude 客户端里的项目）
+    const byDir = new Map();
+    for (const c of rest) {
+      const wd = c.workdir || '~';
+      if (!byDir.has(wd)) byDir.set(wd, []);
+      byDir.get(wd).push(c);
+    }
+    const curWd = state.current ? state.current.workdir : null;
+    for (const [wd, items] of byDir) {
+      groups.push([{ name: workdirName(wd), title: `服务器目录：${wd}`, current: wd === curWd, onNew: () => newChat(wd), newTitle: `在 ${workdirName(wd)} 中新建对话` }, items]);
+    }
   }
-  // Code 模式按服务器工作目录分组（相当于 Claude 客户端里的项目）
-  const groups = new Map();
-  for (const c of rest) {
-    const wd = c.workdir || '~';
-    if (!groups.has(wd)) groups.set(wd, []);
-    groups.get(wd).push(c);
-  }
-  const curWd = state.current ? state.current.workdir : null;
-  for (const [wd, items] of groups) {
-    box.append(groupEl({ name: workdirName(wd), title: `服务器目录：${wd}`, current: wd === curWd, onNew: () => newChat(wd), newTitle: `在 ${wd} 中新建对话` }, items));
-  }
+  // 和官方客户端一样：搜索、筛选排序按钮只放在第一个分组的标题上
+  groups.forEach(([g, items], i) => box.append(groupEl(g, items, i === 0)));
 }
 
-function groupEl(g, items) {
+// ---- 侧边栏排序 / 分组（保存在本机） ----
+
+const VIEW_DEFAULTS = { sort: 'updated', group: 'project' };
+
+function viewPref(key) {
+  return localStorage.getItem(`sidebar.${key}`) || VIEW_DEFAULTS[key];
+}
+
+function setViewPref(key, value) {
+  localStorage.setItem(`sidebar.${key}`, value);
+  renderSidebar();
+}
+
+function sortConvs(list) {
+  const sort = viewPref('sort');
+  const out = list.slice();
+  if (sort === 'created') out.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  else if (sort === 'title') out.sort((a, b) => String(a.title || '').localeCompare(String(b.title || ''), 'zh-CN'));
+  else out.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  return out;
+}
+
+function viewMenu(anchor) {
+  const sort = viewPref('sort');
+  const group = viewPref('group');
+  const code = state.mode === 'code';
+  showMenu(anchor, [
+    { heading: '排序' },
+    { text: '最近更新', checked: sort === 'updated', onClick: () => setViewPref('sort', 'updated') },
+    { text: '创建时间', checked: sort === 'created', onClick: () => setViewPref('sort', 'created') },
+    { text: '标题', checked: sort === 'title', onClick: () => setViewPref('sort', 'title') },
+    code ? '-' : null,
+    code ? { heading: '分组' } : null,
+    code ? { text: '按项目（服务器目录）', checked: group === 'project', onClick: () => setViewPref('group', 'project') } : null,
+    code ? { text: '不分组', checked: group === 'none', onClick: () => setViewPref('group', 'none') } : null,
+  ]);
+}
+
+function groupEl(g, items, first) {
   const group = h(
     'div',
     { class: `group${g.current ? ' current' : ''}`, role: 'group', 'aria-label': g.name },
@@ -215,7 +261,8 @@ function groupEl(g, items) {
       g.pin ? h('span', { class: 'pin-ic', html: icon('pin', 13) }) : null,
       h('span', { class: 'group-name' }, g.name),
       g.onNew ? h('button', { class: 'icon-btn', title: g.newTitle || '新对话', 'aria-label': g.newTitle || '新对话', html: icon('plus', 15), onclick: g.onNew }) : null,
-      h('button', { class: 'icon-btn', title: '搜索对话 (Ctrl+K)', 'aria-label': '搜索对话', html: icon('search', 14), onclick: () => toggleSearch(true) }),
+      first ? h('button', { class: 'icon-btn', title: '搜索对话 (Ctrl+K)', 'aria-label': '搜索对话', html: icon('search', 14), onclick: () => toggleSearch(true) }) : null,
+      first ? h('button', { class: 'icon-btn', title: '筛选与排序', 'aria-label': '筛选与排序', 'aria-haspopup': 'menu', html: icon('sliders', 14), onclick: (e) => viewMenu(e.currentTarget) }) : null,
     ),
   );
   for (const c of items) group.append(convItem(c));
@@ -344,6 +391,12 @@ function flashMessage(id) {
 
 // ---- 账号 / 菜单 ----
 
+/** 显示的称呼：设置里填了就用设置的，否则用 Windows 用户名 */
+function displayName() {
+  const custom = state.settings && state.settings.ui && state.settings.ui.displayName;
+  return (custom && custom.trim()) || (state.appInfo && state.appInfo.username) || '';
+}
+
 const SSH_LABELS = { disconnected: '未连接', connecting: '连接中…', connected: '已连接', reconnecting: '重连中…', error: '连接失败' };
 
 function connStatusText() {
@@ -360,7 +413,7 @@ function renderAccount() {
   const s = state.settings.ssh;
   const el = $('#account');
   el.textContent = '';
-  const name = (state.appInfo && state.appInfo.username) || s.username || '我';
+  const name = displayName() || s.username || '我';
   const sub = s.host ? `${s.username}@${s.host}` : '未配置服务器';
   el.title = connStatusText();
   el.setAttribute('aria-label', `${name}，${sub}，${connStatusText()}`);
@@ -478,11 +531,15 @@ async function customize(tab) {
 
 // ======================= 首页 =======================
 
-function renderHome() {
+function renderGreeting() {
   const cowork = state.mode === 'cowork';
   $('#greet-logo').innerHTML = cowork ? icon('cowork', 26, 'spark') : spark(26);
-  const name = state.appInfo && state.appInfo.username;
+  const name = displayName();
   $('#greet-text').textContent = cowork ? (name ? `${name}，今天想让我帮你做什么？` : '今天想让我帮你做什么？') : name ? `接下来做什么，${name}？` : '接下来做什么？';
+}
+
+function renderHome() {
+  renderGreeting();
   renderStarters();
   loadStats();
 }
@@ -507,6 +564,62 @@ async function loadStats() {
     state.stats = null;
   }
   renderStats();
+}
+
+// 模型统计：按天的 token 柱状图（按模型堆叠）+ 图例（输入 / 输出 / 占比），与官方客户端一致
+const MODEL_COLORS = ['#4b83e6', '#6f9cf0', '#93b6f5', '#b5cdf8', '#d2e1fb', '#8e9bb3'];
+
+function niceStep(max) {
+  const raw = max / 3 || 1;
+  const p = 10 ** Math.floor(Math.log10(raw));
+  for (const m of [1, 2, 2.5, 5, 10]) if (raw <= m * p) return m * p;
+  return 10 * p;
+}
+
+function renderModelChart(box, s) {
+  const models = s.models;
+  const color = new Map(models.map((m, i) => [m.model, MODEL_COLORS[Math.min(i, MODEL_COLORS.length - 1)]]));
+  const days = s.daily || [];
+  if (days.length) {
+    const max = Math.max(...days.map((d) => d.total), 1);
+    const step = niceStep(max);
+    const top = Math.ceil(max / step) * step;
+    const ticks = [];
+    for (let t = 0; t <= top + 1e-9; t += step) ticks.push(t);
+    const yAxis = h('div', { class: 'chart-y', 'aria-hidden': 'true' }, ticks.map((t) => h('span', { style: `bottom:${(t / top) * 100}%` }, t ? fmtTokens(t) : '0')));
+    const plot = h('div', { class: 'chart-plot' }, ticks.slice(1).map((t) => h('div', { class: 'gl', style: `bottom:${(t / top) * 100}%` })));
+    const bars = h('div', { class: 'chart-bars' });
+    const labels = h('div', { class: 'chart-x', 'aria-hidden': 'true' });
+    for (const d of days) {
+      const [, mo, dd] = d.date.split('-').map(Number);
+      const col = h('div', { class: 'chart-bar', title: `${mo}月${dd}日：${fmtTokens(d.total)} tokens` });
+      // 用量大的模型放在最下面
+      for (const m of models) {
+        const v = d.models[m.model];
+        if (v) col.append(h('span', { style: `height:${(v / top) * 100}%;background:${color.get(m.model)}`, title: `${modelName(m.model)}：${fmtTokens(v)}` }));
+      }
+      bars.append(col);
+      labels.append(h('span', {}, `${mo}月${dd}日`));
+    }
+    plot.append(bars);
+    box.append(h('div', { class: 'chart', role: 'img', 'aria-label': `最近 ${days.length} 个有用量的日期的 token 用量` }, yAxis, plot), labels);
+  }
+  const total = models.reduce((sum, m) => sum + m.tokens, 0) || 1;
+  const legend = h('div', { class: 'legend' });
+  for (const m of models) {
+    const io = m.ioKnown ? `${fmtTokens(m.input)} 输入 · ${fmtTokens(m.output)} 输出` : `${fmtTokens(m.tokens)} tokens`;
+    legend.append(
+      h(
+        'div',
+        { class: 'legend-row' },
+        h('span', { class: 'sw', style: `background:${color.get(m.model)}` }),
+        h('span', { class: 'name', title: m.model }, modelName(m.model)),
+        h('span', { class: 'io' }, io),
+        h('span', { class: 'pct' }, `${((m.tokens / total) * 100).toFixed(1)}%`),
+      ),
+    );
+  }
+  box.append(legend);
 }
 
 function seg(options, current, onPick, label) {
@@ -548,18 +661,7 @@ function renderStats() {
       box.append(h('div', { class: 'stats-foot' }, '还没有模型使用记录。'));
       return;
     }
-    const max = Math.max(...s.models.map((m) => m.tokens), 1);
-    for (const m of s.models) {
-      box.append(
-        h(
-          'div',
-          { class: 'model-row' },
-          h('span', { class: 'name', title: m.model }, modelName(m.model)),
-          h('span', { class: 'num' }, `${fmtTokens(m.tokens)} tokens · ${m.messages} 条`),
-          h('div', { class: 'bar' }, h('span', { style: `width:${Math.max(2, Math.round((m.tokens / max) * 100))}%` })),
-        ),
-      );
-    }
+    renderModelChart(box, s);
     return;
   }
   const tiles = [
@@ -1256,16 +1358,13 @@ function renderActivity() {
 }
 
 function toggleActivity() {
+  // 右侧停靠区里的面板可以同时打开，上下排列
   const panel = $('#activity');
   panel.hidden = !panel.hidden;
-  if (!panel.hidden) {
-    $('#files').hidden = true;
-    renderActivity();
-  }
+  if (!panel.hidden) renderActivity();
 }
 
 function openFiles() {
-  $('#activity').hidden = true;
   toggleFiles();
 }
 
@@ -1273,6 +1372,7 @@ function renderAll() {
   renderModeSeg();
   renderSidebar();
   renderAccount();
+  renderGreeting();
   renderHeader();
   renderChips();
   renderMeta();
@@ -1338,6 +1438,7 @@ async function show(id) {
   if (state.current) renderMessages();
   else renderHome();
   refreshBranch();
+  syncDockRoot();
   $('#input').focus();
 }
 
@@ -1595,6 +1696,7 @@ function onChatEvent(ev) {
         if (workdirChanged) {
           state.branchFor = null;
           refreshBranch();
+          syncDockRoot();
         }
       }
       renderSidebar();
@@ -1626,6 +1728,8 @@ function onChatEvent(ev) {
       if (ev.convId === state.currentId) {
         renderComposer();
         renderRing();
+        // Claude 完成一轮后刷新改动面板
+        if (!ev.running) refreshChanges();
       }
       if (!ev.running && !state.current) loadStats();
       break;
@@ -1670,6 +1774,7 @@ function onStatus(st) {
   if (isConnected && !wasConnected) {
     state.branchFor = null;
     refreshBranch();
+    syncDockRoot(true);
   } else if (!isConnected && state.branch) {
     state.branch = null;
     state.branchFor = null;
@@ -1783,6 +1888,8 @@ function bindEvents() {
   $('#btn-export').addEventListener('click', () => state.currentId && exportConv(state.currentId));
   $('#btn-activity').addEventListener('click', toggleActivity);
   $('#btn-files').addEventListener('click', openFiles);
+  $('#btn-changes').addEventListener('click', toggleChanges);
+  $('#btn-browser').addEventListener('click', toggleBrowser);
 
   $('#btn-perm').addEventListener('click', (e) => permMenu(e.currentTarget));
   $('#btn-translate').addEventListener('click', () =>
@@ -1956,8 +2063,11 @@ async function init() {
     }
   }
   state.running = new Set(state.status.running);
+  initDock();
   initTerminal();
   initFiles();
+  initChanges();
+  initBrowser();
   bindEvents();
   renderAll();
   renderHome();

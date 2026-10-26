@@ -12,7 +12,7 @@ const term = { xterm: null, fit: null, id: null, ro: null };
 function termTheme() {
   const dark = matchMedia('(prefers-color-scheme: dark)').matches;
   return dark
-    ? { background: '#1d1d1b', foreground: '#e8e6dc', cursor: '#d97757', selectionBackground: '#4a4a46' }
+    ? { background: '#171717', foreground: '#e6e6e6', cursor: '#d97757', selectionBackground: '#454545' }
     : { background: '#fbfaf7', foreground: '#2b2a27', cursor: '#d97757', selectionBackground: '#d9d5c9' };
 }
 
@@ -84,111 +84,6 @@ export function closeTerminal() {
   if (term.id) api.termClose(term.id);
   term.id = null;
   $('#term-panel').hidden = true;
-}
-
-// ======================= 服务器文件 =======================
-
-const files = { path: null, entries: [], home: null };
-
-export function toggleFiles() {
-  const panel = $('#files');
-  panel.hidden = !panel.hidden;
-  if (!panel.hidden) loadFiles(files.path || currentWorkdir());
-}
-
-export async function loadFiles(p) {
-  const list = $('#files-list');
-  list.textContent = '';
-  if (!connected()) {
-    list.append(h('div', { class: 'conv-empty' }, '连接服务器后可以浏览文件'));
-    return;
-  }
-  list.append(h('div', { class: 'conv-empty' }, h('span', { class: 'spinner' }), ' 读取中…'));
-  try {
-    const r = await api.rfsList(p);
-    files.path = r.path;
-    files.home = r.home;
-    files.entries = r.entries;
-    renderFiles();
-  } catch (e) {
-    list.textContent = '';
-    list.append(h('div', { class: 'conv-empty error' }, errMsg(e)));
-  }
-}
-
-function displayPath(p) {
-  if (files.home && (p === files.home || p.startsWith(`${files.home}/`))) return `~${p.slice(files.home.length)}`;
-  return p;
-}
-
-function renderFiles() {
-  // LRM：容器用 rtl 实现左侧省略号，避免开头的 / 被挪到末尾
-  $('#files-path').textContent = `\u200E${displayPath(files.path)}\u200E`;
-  $('#files-path').title = files.path;
-  const list = $('#files-list');
-  list.textContent = '';
-  const parent = files.path.replace(/\/[^/]*$/, '') || '/';
-  if (files.path !== '/') list.append(h('button', { class: 'file-item dir', onclick: () => loadFiles(parent) }, svg('arrowUpDir', 15), h('span', { class: 'fname' }, '..')));
-  const showHidden = $('#files-hidden').checked;
-  for (const e of files.entries) {
-    if (!showHidden && e.name.startsWith('.')) continue;
-    const full = `${files.path === '/' ? '' : files.path}/${e.name}`;
-    const item = h(
-      'button',
-      { class: `file-item ${e.type}`, title: full, onclick: () => (e.type === 'dir' ? loadFiles(full) : previewFile(full)) },
-      svg(e.type === 'dir' ? 'folder' : 'file', 15),
-      h('span', { class: 'fname' }, e.name),
-      e.type !== 'dir' ? h('span', { class: 'fmeta' }, fmtSize(e.size)) : null,
-    );
-    item.addEventListener('contextmenu', (ev) => {
-      ev.preventDefault();
-      showMenu(item, [
-        { text: '在输入框中引用', icon: 'pencil', onClick: () => hooks.fillInput(`@${full} `, true) },
-        { text: '复制路径', icon: 'copy', onClick: () => copyText(full) },
-        e.type === 'dir' ? { text: '设为对话的工作目录', icon: 'server', onClick: () => hooks.setWorkdir(displayPath(full)) } : null,
-      ]);
-    });
-    list.append(item);
-  }
-}
-
-async function previewFile(p) {
-  let r;
-  try {
-    r = await api.rfsRead(p);
-  } catch (e) {
-    toast(errMsg(e), 'error');
-    return;
-  }
-  if (r.image) {
-    lightbox(r.image, p);
-    return;
-  }
-  const body = h('div', { class: 'dialog-body file-preview' });
-  if (r.binary) body.append(h('p', {}, `二进制文件（${fmtSize(r.size)}），无法预览。`));
-  else {
-    if (r.truncated) body.append(h('p', { class: 'hint-text' }, `文件较大（${fmtSize(r.size)}），只显示前 2 MB。`));
-    if (/\.md$/i.test(p)) {
-      const md = h('div', { class: 'md' });
-      md.innerHTML = renderMarkdown(r.content);
-      body.append(md);
-    } else body.append(h('pre', { class: 'code-view' }, r.content));
-  }
-  const dlg = dialogShell({
-    title: displayPath(p),
-    wide: true,
-    cls: 'viewer',
-    body,
-    foot: h('div', { class: 'dialog-foot' }, h('button', { class: 'btn', onclick: () => copyText(p) }, '复制路径'), h('button', { class: 'btn', onclick: () => (m.close(), hooks.fillInput(`@${p} `, true)) }, '在输入框中引用'), h('span', { class: 'spacer' }), h('button', { class: 'btn primary', onclick: () => m.close() }, '关闭')),
-  });
-  const m = openModal(dlg);
-}
-
-export function initFiles() {
-  $('#btn-files-close').addEventListener('click', () => ($('#files').hidden = true));
-  $('#btn-files-home').addEventListener('click', () => loadFiles(currentWorkdir()));
-  $('#btn-files-refresh').addEventListener('click', () => loadFiles(files.path || currentWorkdir()));
-  $('#files-hidden').addEventListener('change', () => files.path && renderFiles());
 }
 
 // ======================= 上下文用量 / 额度 =======================

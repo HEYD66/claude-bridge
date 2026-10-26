@@ -42,31 +42,32 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #262624;
-    --bg-sidebar: #1f1e1d;
-    --bg-card: #30302e;
-    --bg-tile: #3a3a37;
-    --bg-input: #30302e;
-    --bg-chip: #2d2d2b;
+    /* 新版官方客户端的深色主题：更暗、偏中性灰（主区域背景与 main.js 的标题栏颜色一致） */
+    --bg: #1f1f1f;
+    --bg-sidebar: #181818;
+    --bg-card: #282828;
+    --bg-tile: #303030;
+    --bg-input: #282828;
+    --bg-chip: #252525;
     --bg-hover: rgba(255, 255, 255, 0.05);
-    --bg-active: #393937;
-    --bg-elev: #30302e;
-    --text: #ecebe5;
-    --text-2: #c9c8be;
-    --muted: #9c9a92;
-    --faint: #6f6e68;
+    --bg-active: #2e2e2e;
+    --bg-elev: #282828;
+    --text: #ececec;
+    --text-2: #c7c7c7;
+    --muted: #999999;
+    --faint: #6b6b6b;
     --border: rgba(255, 255, 255, 0.09);
     --border-strong: rgba(255, 255, 255, 0.17);
     --accent-soft: rgba(217, 119, 87, 0.18);
     --link: #7fadf8;
-    --user-bubble: #141413;
-    --code-bg: #1d1d1b;
+    --user-bubble: #121212;
+    --code-bg: #171717;
     --inline-code: rgba(255, 255, 255, 0.08);
     --danger: #e0715c;
     --danger-soft: rgba(224, 113, 92, 0.12);
     --ok: #6cbf86;
     --warn: #d9a94e;
-    --heat-0: #3a3a37;
+    --heat-0: #303030;
     --heat-1: #2c4673;
     --heat-2: #3b63a6;
     --heat-3: #5a8ce3;
@@ -259,6 +260,16 @@ summary:focus-visible,
   transform: rotate(90deg);
 }
 
+/* “更多”是次要入口，文字比“新对话”“自定义”淡一级 */
+#btn-more {
+  color: var(--muted);
+}
+
+#btn-more:hover,
+#btn-more[aria-expanded='true'] {
+  color: var(--text-2);
+}
+
 .side-search {
   padding: 4px 10px 6px;
 }
@@ -308,16 +319,15 @@ summary:focus-visible,
   white-space: nowrap;
 }
 
+/* 分组标题上的按钮常驻显示（与官方客户端一致），颜色比标题略淡 */
 .group-head .icon-btn {
   width: 24px;
   height: 24px;
-  opacity: 0;
+  color: var(--muted);
 }
 
-.group:hover .group-head .icon-btn,
-.group-head .icon-btn:focus-visible,
-.group.current .group-head .icon-btn {
-  opacity: 1;
+.group-head .icon-btn:hover {
+  color: var(--text);
 }
 
 .conv-item {
@@ -3296,4 +3306,662 @@ textarea.perm-msg {
     animation: none;
     outline: 2px solid var(--accent);
   }
+}
+
+/* 权限卡片提交中（翻译、发送期间） */
+.perm-card.busy {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+/* 拒绝理由 / 答案的英文译文：左对齐（用户消息里的同类控件是右对齐） */
+.perm-sent {
+  max-width: 100%;
+  margin: 2px 0 0 19px;
+}
+
+.perm-sent summary {
+  justify-content: flex-start;
+}
+
+/* ============ 右侧停靠区（终端 / 改动 / 文件 / 操作记录） ============ */
+.dock {
+  position: relative;
+  width: 420px;
+  min-width: 260px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  padding-top: var(--topbar-h);
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  -webkit-app-region: drag; /* 顶部空白处可以拖动窗口（系统窗口按钮在上方） */
+}
+
+.dock-panels {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 6px 6px;
+  -webkit-app-region: no-drag;
+}
+
+.dock-panel {
+  flex: 1 1 0;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-sidebar);
+  overflow: hidden;
+}
+
+.dock-panel.term-panel {
+  height: auto;
+  flex: 1 1 0;
+  border-top: 1px solid var(--border);
+  background: var(--code-bg);
+}
+
+.dock-resizer {
+  position: absolute;
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 5;
+  -webkit-app-region: no-drag;
+}
+
+.dock-resizer:hover,
+.dock-resizer.dragging,
+.dock-resizer:focus-visible {
+  background: var(--accent-soft);
+  outline: none;
+}
+
+/* 停靠区打开时，主区域顶栏不再需要给窗口按钮留位置 */
+.app.dock-open .topbar {
+  padding-right: 10px;
+}
+
+.panel-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 4px 0 10px;
+  font-size: 13px;
+  color: var(--text-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-head > span:first-child {
+  display: inline-flex;
+  color: var(--muted);
+}
+
+.panel-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 6px 8px;
+}
+
+.panel-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 100%;
+  padding: 16px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.panel-empty b {
+  color: var(--text-2);
+  font-size: 13.5px;
+}
+
+/* 顶栏上的面板开关：打开时高亮 */
+.icon-btn.dock-toggle.on {
+  background: color-mix(in srgb, var(--link) 22%, transparent);
+  color: var(--link);
+}
+
+/* 文件树 */
+.files-filter {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 8px 2px;
+  padding: 0 8px;
+  height: 30px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--bg-input);
+  color: var(--muted);
+}
+
+.files-filter:focus-within {
+  border-color: var(--accent);
+}
+
+.files-filter > span {
+  display: inline-flex;
+}
+
+.files-filter input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.file-item .chev {
+  flex: none;
+  width: 14px;
+  display: inline-flex;
+  justify-content: center;
+  color: var(--muted);
+  transition: transform 0.12s;
+}
+
+.file-item.open .chev {
+  transform: rotate(90deg);
+}
+
+.file-item.search .fname {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.file-item .fdir,
+.file-item .fhit {
+  font-size: 11.5px;
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-item .fhit {
+  font-family: var(--font-mono);
+  color: var(--muted);
+}
+
+.file-note {
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--faint);
+}
+
+.file-note.error {
+  color: var(--danger);
+}
+
+/* Git 改动 */
+.chg-sum {
+  padding: 4px 8px 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.chg-sum .add,
+.chg-num .add {
+  color: var(--ok);
+}
+
+.chg-sum .del,
+.chg-num .del {
+  color: var(--danger);
+}
+
+.chg-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  text-align: left;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.chg-item:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.chg-st {
+  flex: none;
+  width: 16px;
+  text-align: center;
+  font: 600 11.5px var(--font-mono);
+  color: var(--muted);
+}
+
+.chg-st.modified,
+.chg-st.renamed {
+  color: var(--warn);
+}
+
+.chg-st.added,
+.chg-st.untracked {
+  color: var(--ok);
+}
+
+.chg-st.deleted,
+.chg-st.conflict {
+  color: var(--danger);
+}
+
+.chg-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.chg-dir {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11.5px;
+  color: var(--faint);
+}
+
+.chg-num {
+  flex: none;
+  font: 11.5px var(--font-mono);
+  color: var(--muted);
+}
+
+/* ============ 首页（对照新版官方客户端） ============ */
+.greeting {
+  font-family: var(--font);
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: 0;
+  margin: 0 0 28px;
+}
+
+.stats,
+.starters {
+  margin-left: 0;
+  margin-right: 0;
+}
+
+/* 模型统计柱状图 */
+.chart {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0 0;
+}
+
+.chart-y {
+  position: relative;
+  flex: none;
+  width: 38px;
+  height: 120px;
+}
+
+.chart-y span {
+  position: absolute;
+  right: 0;
+  transform: translateY(50%);
+  font-size: 10.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-plot {
+  position: relative;
+  flex: 1;
+  height: 120px;
+  border-bottom: 1px solid var(--border-strong);
+}
+
+.chart-plot .gl {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 1px dashed var(--border);
+}
+
+.chart-bars,
+.chart-x {
+  display: flex;
+  justify-content: space-around;
+  gap: 6%;
+  padding: 0 4%;
+}
+
+.chart-bars {
+  position: absolute;
+  inset: 0;
+  align-items: flex-end;
+}
+
+.chart-bar {
+  flex: 1;
+  max-width: 76px;
+  height: 100%;
+  display: flex;
+  flex-direction: column-reverse;
+}
+
+.chart-bar span {
+  display: block;
+  min-height: 1px;
+}
+
+.chart-bar span:last-child {
+  border-radius: 3px 3px 0 0;
+}
+
+.chart-x {
+  margin: 4px 0 10px 46px;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.chart-x span {
+  flex: 1;
+  max-width: 76px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.legend-row {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto 52px;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: 12.5px;
+}
+
+.legend-row .sw {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+
+.legend-row .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.legend-row .io {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.legend-row .pct {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 停靠区顶部（窗口按钮左侧）的排列方式切换按钮 */
+.dock-bar {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  display: flex;
+  gap: 2px;
+  -webkit-app-region: no-drag;
+}
+
+/* 左右并排 */
+.dock.row .dock-panels {
+  flex-direction: row;
+  overflow-x: auto; /* 面板太多、放不下时横向滚动，而不是被截掉 */
+}
+
+.dock.row .dock-panel {
+  min-width: 150px;
+  min-height: 0;
+}
+
+/* 并排时面板较窄，标题栏按钮缩小一点，避免关闭按钮被挤出去 */
+.dock.row .panel-head {
+  gap: 2px;
+  padding-left: 8px;
+}
+
+.dock.row .panel-head .icon-btn.sm {
+  width: 24px;
+  height: 24px;
+  flex: none;
+}
+
+/* 最大化：只显示这一个面板 */
+.dock.has-max .dock-panel:not(.maxed) {
+  display: none;
+}
+
+/* ============ 内置浏览器 ============ */
+.dock-panel.browser-panel {
+  flex-grow: 2; /* 和其它面板一起打开时占得多一些 */
+}
+
+.browser-panel .panel-head {
+  gap: 2px;
+}
+
+.br-url {
+  flex: 1;
+  min-width: 60px;
+  height: 26px;
+  margin: 0 4px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  outline: none;
+}
+
+.br-url:focus {
+  border-color: var(--accent);
+}
+
+#btn-br-reload.loading .icon {
+  animation: spin 1s linear infinite;
+}
+
+.br-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  background: #fff;
+}
+
+.br-view {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+
+/* 没打开网页时的首页：覆盖在 webview 上 */
+.br-home {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  padding: 24px 16px;
+  background: var(--bg-sidebar);
+}
+
+.br-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin: 8px auto 20px;
+  max-width: 320px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.br-hero .icon {
+  color: var(--muted);
+}
+
+.br-hero b {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.br-sec-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 auto 4px;
+  max-width: 420px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.br-services {
+  max-width: 420px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.br-svc {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text-2);
+  text-align: left;
+  font-size: 13px;
+}
+
+.br-svc:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.br-svc .icon {
+  color: var(--muted);
+}
+
+.bs-url {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+
+.bs-proc {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--faint);
+}
+
+.br-proc {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+  font-size: 13px;
+}
+
+.bp-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.bp-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.bp-meta {
+  font-size: 11.5px;
+  color: var(--faint);
+}
+
+.bp-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+
+.bp-dot.running {
+  background: var(--ok);
+}
+
+.bp-urls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.br-other {
+  margin-top: 4px;
+}
+
+.br-other summary {
+  cursor: pointer;
+  padding: 4px 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.br-other .br-svc {
+  margin-top: 4px;
 }

@@ -14,6 +14,8 @@ const { ChatManager } = require('./chat-manager');
 const { RemoteFs } = require('./remote-fs');
 const { Customize } = require('./customize');
 const { DesktopMcp } = require('./desktop-mcp');
+const { LocalProcesses } = require('./local-procs');
+const { BrowserHost, listLocalServices } = require('./browser-host');
 const translator = require('./translator');
 
 const APP_ROOT = path.join(__dirname, '..', '..');
@@ -43,7 +45,9 @@ const MIME = {
   '.map': 'application/json; charset=utf-8',
 };
 
-protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
+const APP_SCHEME = { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } };
+// 只能在 ready 之前调用；端到端测试在 ready 之后才加载本文件，由测试脚本提前注册
+if (!app.isReady()) protocol.registerSchemesAsPrivileged([APP_SCHEME]);
 
 const windows = new Set();
 let store;
@@ -54,6 +58,8 @@ let chat;
 let rfs;
 let customize;
 let desktop;
+let procs; // Claude 在本机启动的后台进程
+let browserHost; // 内置浏览器
 const pendingAsks = new Map();
 const autoApprove = new Set(); // 本次运行中“始终允许”的本机操作类型
 const activity = [];
@@ -166,7 +172,8 @@ function syncDesktop() {
 
 function overlayColors() {
   const dark = nativeTheme.shouldUseDarkColors;
-  return dark ? { color: '#262624', symbolColor: '#c3c2b7', height: 40 } : { color: '#faf9f5', symbolColor: '#3d3d3a', height: 40 };
+  // 与 styles.css 中的 --bg 保持一致
+  return dark ? { color: '#1f1f1f', symbolColor: '#c7c7c7', height: 40 } : { color: '#faf9f5', symbolColor: '#3d3d3a', height: 40 };
 }
 
 function windowsUsername() {
@@ -217,9 +224,11 @@ function createWindow(convId) {
       nodeIntegration: false,
       sandbox: true,
       spellcheck: false,
+      webviewTag: true, // 内置浏览器面板；安全设置在 BrowserHost.attachWindow 中强制
     },
   });
   windows.add(w);
+  if (browserHost) browserHost.attachWindow(w);
   w.loadURL(`${APP_ORIGIN}/src/renderer/index.html${convId ? `#conv=${encodeURIComponent(convId)}` : ''}`);
   w.once('ready-to-show', () => w.show());
   w.on('focus', () => w.flashFrame(false));
@@ -399,6 +408,10 @@ function registerIpc() {
   handle('rfs:list', (p) => rfs.list(p));
   handle('rfs:read', (p) => rfs.read(p));
   handle('rfs:home', () => rfs.home());
+  handle('rfs:find', (root, q) => rfs.find(root, q));
+  handle('rfs:grep', (root, q) => rfs.grep(root, q));
+  handle('remote:gitStatus', (workdir) => rfs.gitStatus(workdir));
+  handle('remote:gitDiff', (root, file, opts) => rfs.gitDiff(String(root || ''), file, { untracked: !!(opts && opts.untracked) }));
 
   // 自定义
   handle('custom:overview', (workdir) => customize.overview(workdir));
@@ -426,6 +439,15 @@ function registerIpc() {
     if (t) t.stream.close();
     terminals.delete(id);
   });
+
+  // 内置浏览器 / 本机后台进程
+  handle('browser:services', async () => ({ services: await listLocalServices(), procs: procs.list() }));
+  handle('procs:list', () => procs.list());
+  handle('procs:stop', (id) => {
+    procs.stop(id);
+    return procs.list();
+  });
+  handle('procs:output', (id) => procs.tail(id, 400).text);
 
   // 桌面控制
   handle('desktop:status', () => desktop.status());
@@ -487,7 +509,10 @@ if (!app.requestSingleInstanceLock()) {
 
     desktop = new DesktopMcp();
     desktop.on('state', pushStatus);
-    tools = new LocalTools({ getSettings: () => store.getSettings(), confirm: confirmLocalOperation, desktop });
+    procs = new LocalProcesses();
+    procs.on('changed', (list) => broadcast('procs', list));
+    browserHost = new BrowserHost({ windows: () => windows, mainWindow });
+    tools = new LocalTools({ getSettings: () => store.getSettings(), confirm: confirmLocalOperation, desktop, procs, browser: browserHost });
     tools.on('activity', (act) => {
       const i = activity.findIndex((a) => a.id === act.id);
       if (i >= 0) activity[i] = act;
@@ -548,6 +573,8 @@ if (!app.requestSingleInstanceLock()) {
     // 不停止服务器上的任务：它们会继续运行，下次打开后自动接上
     if (chat) chat.flushAll();
     if (desktop) desktop.stop();
+    // Claude 在本机启动的开发服务器等随程序一起结束
+    if (procs) procs.stopAll();
     if (ssh) ssh.disconnect();
     if (mcpServer) mcpServer.stop();
   });

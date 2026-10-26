@@ -20,13 +20,19 @@ function plan(body) {
   const u = lastUser(msgs);
   const ut = u ? textOf(u.content) : '';
   const hasToolResult = Array.isArray(u && u.content) && u.content.some((c) => c.type === 'tool_result');
-  const allUserText = msgs.filter((m) => m.role === 'user').map((m) => textOf(m.content)).join('\n');
+  // 去掉 Claude Code 附加的 <system-reminder>，否则 ECHO 截取的末尾会被它们占满
+  const allUserText = msgs
+    .filter((m) => m.role === 'user')
+    .map((m) => textOf(m.content).replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, ''))
+    .join('\n');
   const tools = (body.tools || []).map((t) => t.name);
   log('req', { tools: tools.length, last: ut.slice(0, 160), hasToolResult });
   if (hasToolResult) {
     const r = ut;
     return [{ type: 'text', text: `Tool finished. Result was: ${r.slice(0, 300)}` }];
   }
+  // --prompt-suggestions 的辅助请求：回一条短建议（长文本会被 Claude Code 丢弃）
+  if (ut.includes('[SUGGESTION MODE')) return [{ type: 'text', text: 'run the tests' }];
   const m = ut.match(/CMD:(\w+)(?::(.*))?/);
   const cmd = m ? m[1] : null;
   const arg = m && m[2] ? m[2].trim() : '';
@@ -35,7 +41,12 @@ function plan(body) {
   if (cmd === 'WRITE') return [{ type: 'tool_use', name: 'Write', input: { file_path: arg, content: 'line one\nline two\n' } }];
   if (cmd === 'EDIT') return [{ type: 'tool_use', name: 'Edit', input: { file_path: arg, old_string: 'line two', new_string: 'line TWO edited' } }];
   if (cmd === 'ASK') return [{ type: 'tool_use', name: 'AskUserQuestion', input: { questions: [{ question: 'Which color do you prefer?', header: 'Color', multiSelect: false, options: [{ label: 'Red', description: 'Warm' }, { label: 'Blue', description: 'Cool' }] }] } }];
-  if (cmd === 'TODO') return [{ type: 'tool_use', name: tools.includes('TodoWrite') ? 'TodoWrite' : 'TaskCreate', input: tools.includes('TodoWrite') ? { todos: [{ content: 'Step one', status: 'completed', activeForm: 'Doing step one' }, { content: 'Step two', status: 'in_progress', activeForm: 'Doing step two' }] } : { subject: 'Step one', description: 'do it' } }];
+  if (cmd === 'TODO') {
+    if (tools.includes('TodoWrite')) return [{ type: 'tool_use', name: 'TodoWrite', input: { todos: [{ content: 'Step one', status: 'completed', activeForm: 'Doing step one' }, { content: 'Step two', status: 'in_progress', activeForm: 'Doing step two' }] } }];
+    if (tools.includes('TaskCreate')) return [{ type: 'tool_use', name: 'TaskCreate', input: { subject: 'Step one', description: 'do it' } }];
+    // 2.1.29x 的 -p 模式下两种待办工具都不提供
+    return [{ type: 'text', text: 'NO_TODO_TOOL' }];
+  }
   if (cmd === 'PLAN') return [{ type: 'tool_use', name: 'ExitPlanMode', input: { plan: '1. Do A\n2. Do B' } }];
   if (cmd === 'TOOLS') return [{ type: 'text', text: `TOOLS=${tools.join(',')}` }];
   if (cmd === 'AGENT') return [{ type: 'tool_use', name: tools.includes('Agent') ? 'Agent' : 'Task', input: { description: 'Sub task', prompt: 'Please say SUBAGENT-HI', subagent_type: 'general-purpose' } }];

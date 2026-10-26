@@ -54,8 +54,14 @@ const paths = {
   help: '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/>',
   clipboard: '<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2M9 12h6M9 16h4"/>',
   bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.9 1.9 0 0 0 3.4 0"/>',
-  code: '<path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/>',
-  cowork: '<path d="M9.9 2.4a1 1 0 0 1 1.9 0l1.1 3.2a1 1 0 0 0 .6.6l3.2 1.1a1 1 0 0 1 0 1.9l-3.2 1.1a1 1 0 0 0-.6.6l-1.1 3.2a1 1 0 0 1-1.9 0l-1.1-3.2a1 1 0 0 0-.6-.6L5 9.2a1 1 0 0 1 0-1.9l3.2-1.1a1 1 0 0 0 .6-.6Z"/><path d="M18 14v6M15 17h6"/>',
+  // 停靠区布局：左右并排 / 上下排列 / 最大化 / 还原
+  splitRow: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/>',
+  splitCol: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 12h18"/>',
+  maximize: '<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>',
+  minimize: '<path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/>',
+  // 与官方客户端一致：</> 和带勾的清单
+  code: '<path d="m17 17 5-5-5-5M7 7l-5 5 5 5M14 4l-4 16"/>',
+  cowork: '<path d="m3 6.5 1.8 1.8L8 5M3 14.5l1.8 1.8L8 13M12 7h9M12 15h9M3 20.5h18"/>',
   upload: '<path d="M12 15V3M7 8l5-5 5 5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>',
   layers: '<path d="m12 2 10 5-10 5L2 7Z"/><path d="m2 17 10 5 10-5M2 12l10 5 10-5"/>',
   arrowUpLine: '<path d="M12 19V5M5 12l7-7 7 7"/>',

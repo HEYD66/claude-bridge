@@ -87,6 +87,13 @@ function buildSystemPrompt(settings, mcpAvailable, mode, desktop) {
       `The user's local Windows PC is reachable ONLY through the MCP tools named mcp__${SERVER_NAME}__* (paths are Windows paths such as D:\\project\\app.js). ` +
         `When the user mentions "my computer", "local", "本机" or Windows paths, use those tools. Call mcp__${SERVER_NAME}__list_allowed_roots first to learn which local folders are shared.`,
     );
+    // 用户的项目在本机：安装、构建、启动服务都在本机做，并用内置浏览器预览
+    parts.push(
+      "When the user's project is on their PC, install dependencies, build, run and serve it ON THE PC — never copy it to or run it on this server unless the user asks. " +
+        `Use mcp__${SERVER_NAME}__run_command for commands that finish, and mcp__${SERVER_NAME}__start_process for dev servers and other long-running commands (then read_process_output / stop_process). ` +
+        `Preview and test local web apps (http://localhost:...) in the built-in browser with mcp__${SERVER_NAME}__browser_navigate, browser_snapshot, browser_click, browser_type, browser_screenshot and browser_console. ` +
+        'If these tools are missing, the user has turned off command execution or the browser in Claude Bridge settings — tell them instead of falling back to the server.',
+    );
     if (desktop) {
       parts.push(`Tools named mcp__${SERVER_NAME}__desktop_* control the user's Windows desktop (screenshots, mouse, keyboard, windows, apps). Take a screenshot or snapshot first to see the screen state before acting.`);
     }
@@ -117,6 +124,7 @@ class ChatManager extends EventEmitter {
     this.live = new Map();
     this._emitTimers = new Map();
     this._saveTimers = new Map();
+    this._answering = new Set(); // 正在提交的权限回答（convId:requestId）
     this._mcpConfigKey = null;
     this.slashCommands = [];
     this.claudeInfo = null;
@@ -375,6 +383,14 @@ class ChatManager extends EventEmitter {
     const msg = this._newAssistant(live, null);
     this._emitMsg(live.conv, msg);
     return msg;
+  }
+
+  /** 去掉一个没有任何内容的占位回复 */
+  _dropAssistant(live, msg) {
+    const i = live.conv.messages.indexOf(msg);
+    if (i >= 0) live.conv.messages.splice(i, 1);
+    if (live.current === msg) this._setCurrent(live, null);
+    this._emitReload(live.conv);
   }
 
   _finishAssistant(live, status, msg = live.current) {
@@ -930,6 +946,9 @@ class ChatManager extends EventEmitter {
       case 'prompt_suggestion':
         this._onSuggestion(conv, ev.suggestion);
         break;
+      case 'command_lifecycle':
+        this._onLifecycle(live, ev);
+        break;
       case 'rate_limit_event':
         if (ev.rate_limit_info) {
           this.rateLimits = { ...ev.rate_limit_info, at: Date.now() };
@@ -1055,13 +1074,33 @@ class ChatManager extends EventEmitter {
     msg.status = 'sent';
     this._emitMsg(conv, msg);
     if (live.current && live.current.forUser === msg.id) return; // 已有占位回复
-    // 新的一轮开始：上一轮（若被立即发送打断）收尾
-    if (live.current && live.current.status === 'running') this._finishAssistant(live, live.current.blocks.length ? 'done' : 'stopped');
+    // 新的一轮开始：上一轮被“立即发送”打断。已有内容的标记为停止；还没有内容的占位直接去掉
+    // （Claude Code 会把被打断的消息并入新一轮一起回答，留着只是一个空的“已停止”）
+    if (live.current && live.current.status === 'running') {
+      const cur = live.current;
+      if (!cur.blocks.length && !cur.error && !cur.notices.length) this._dropAssistant(live, cur);
+      else this._finishAssistant(live, 'stopped');
+    }
     const idx = conv.messages.indexOf(msg);
     // 去掉还没有内容的旧占位（例如重试）
     const a = this._newAssistant(live, msg.id, idx + 1);
     this._emitReload(conv);
     return a;
+  }
+
+  /**
+   * 排队消息的生命周期。消息刚发出就被“立即发送”插队时，Claude Code 不回显它，
+   * 而是标记为 cancelled 并把它并入下一轮一起回答：这时把它当作已发送，否则会一直显示“排队中”
+   */
+  _onLifecycle(live, ev) {
+    if (ev.state !== 'cancelled' || !ev.command_uuid) return;
+    const conv = live.conv;
+    const msg = conv.messages.find((m) => m.role === 'user' && m.wire === ev.command_uuid);
+    if (!msg || !['pending', 'queued'].includes(msg.status)) return;
+    msg.status = 'sent';
+    this._emitMsg(conv, msg);
+    this._touch(conv, false);
+    this._updateRunState(conv);
   }
 
   _handleStreamEvent(live, e) {
@@ -1219,12 +1258,28 @@ class ChatManager extends EventEmitter {
     }
     const assistant = live.current;
     if (!assistant) return; // 本地命令等
+    const aborted = ev.terminal_reason === 'aborted_streaming';
+    const empty = !assistant.blocks.length && !assistant.error && !String(ev.result || '').trim();
+    if (empty && !assistant.stopRequested && (aborted || ev.subtype === 'error_during_execution')) {
+      // 占位回复对应的消息还没开始处理：这个结果属于之前被停止 / 打断的那一轮，忽略
+      const forMsg = assistant.forUser && conv.messages.find((m) => m.id === assistant.forUser);
+      if (forMsg && ['pending', 'translating', 'queued'].includes(forMsg.status)) return;
+      // 刚开始就被“立即发送”打断、没有任何内容的一轮：去掉占位，新一轮会一起回答
+      if (aborted) {
+        this._dropAssistant(live, assistant);
+        this._touch(conv);
+        return;
+      }
+    }
     const u = ev.usage || {};
     const models = {};
+    const modelsIO = {}; // 每个模型的输入（含缓存）/ 输出 token，首页“模型”统计用
     let contextWindow = null;
     for (const [name, mu] of Object.entries(ev.modelUsage || {})) {
       if (!mu || typeof mu !== 'object') continue;
-      models[name] = (mu.inputTokens || 0) + (mu.outputTokens || 0) + (mu.cacheReadInputTokens || 0) + (mu.cacheCreationInputTokens || 0);
+      const input = (mu.inputTokens || 0) + (mu.cacheReadInputTokens || 0) + (mu.cacheCreationInputTokens || 0);
+      models[name] = input + (mu.outputTokens || 0);
+      modelsIO[name] = { in: input, out: mu.outputTokens || 0 };
       if (mu.contextWindow && (name === assistant.model || !contextWindow)) contextWindow = mu.contextWindow;
     }
     assistant.meta = {
@@ -1234,10 +1289,12 @@ class ChatManager extends EventEmitter {
       denials: Array.isArray(ev.permission_denials) ? ev.permission_denials.length : 0,
       tokens: (u.input_tokens || 0) + (u.output_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0),
       models,
+      modelsIO,
       contextTokens: live.lastContext || null,
       contextWindow,
     };
-    const interrupted = ev.subtype === 'error_during_execution' && (assistant.stopRequested || ev.terminal_reason === 'aborted_streaming' || !ev.result);
+    // 被停止或被“立即发送”打断（此时 subtype 仍为 success）
+    const interrupted = aborted || (ev.subtype === 'error_during_execution' && (assistant.stopRequested || !ev.result));
     if (interrupted || assistant.stopRequested) {
       assistant.status = 'stopped';
     } else if (ev.is_error) {
@@ -1346,6 +1403,13 @@ class ChatManager extends EventEmitter {
         this._emitMsg(conv, msg);
       }).catch(() => {});
     }
+    // 权限提示（如“命令里的引号内容无法预先检查”）也翻译成中文
+    if (kind === 'tool' && translateOn && block.decisionReason && needsZhTranslation(block.decisionReason)) {
+      this.translator.translate(block.decisionReason, 'en', 'zh', tr).then((zh) => {
+        block.decisionReasonZh = zh;
+        this._emitMsg(conv, msg);
+      }).catch(() => {});
+    }
   }
 
   _locatePermission(conv, requestId) {
@@ -1378,33 +1442,55 @@ class ChatManager extends EventEmitter {
     if (!found) throw new Error('权限请求不存在');
     const { msg, block } = found;
     if (block.status !== 'pending') throw new Error('这个请求已经处理过了');
-    const tr = this.store.getSettings().translation;
-    const toEn = async (t) => (t && tr.enabled && tr.translateInput && hasCJK(t) ? this.translator.translate(t, 'zh', 'en', tr).catch(() => t) : t);
-    let response;
-    if (answer.behavior === 'allow') {
-      let updatedInput = block.input;
-      if (block.kind === 'question') {
-        const answers = {};
-        for (const [q, v] of Object.entries(answer.answers || {})) answers[q] = await toEn(String(v));
-        updatedInput = { ...block.input, answers };
-        block.answers = answer.answers;
+    // 翻译期间重复点击（或多个窗口同时回答）只处理第一次
+    const lockKey = `${convId}:${requestId}`;
+    if (this._answering.has(lockKey)) throw new Error('正在提交，请稍候');
+    this._answering.add(lockKey);
+    try {
+      const tr = this.store.getSettings().translation;
+      const toEn = async (t) => (t && tr.enabled && tr.translateInput && hasCJK(t) ? this.translator.translate(t, 'zh', 'en', tr).catch(() => t) : t);
+      let response;
+      let sentEn = null; // 经过翻译时实际发出的英文，界面上可以查看
+      if (answer.behavior === 'allow') {
+        let updatedInput = block.input;
+        if (block.kind === 'question') {
+          const answers = {};
+          const changed = [];
+          for (const [q, v] of Object.entries(answer.answers || {})) {
+            answers[q] = await toEn(String(v));
+            if (answers[q] !== String(v)) changed.push(answers[q]);
+          }
+          updatedInput = { ...block.input, answers };
+          if (changed.length) sentEn = changed.join('; ');
+        }
+        response = { behavior: 'allow', updatedInput };
+        // “始终允许”只记住规则和目录；Claude Code 附带的 setMode（如整个会话改为 acceptEdits）不跟着生效，
+        // 否则界面上显示的权限模式和实际不一致，用户也不会预期点一次就放开所有编辑
+        const always = answer.always ? block.suggestions.filter((s) => s && s.type !== 'setMode') : [];
+        if (always.length) response.updatedPermissions = always;
+      } else {
+        const translated = await toEn(answer.message);
+        if (translated && translated !== answer.message) sentEn = translated;
+        const message = translated || (block.kind === 'plan' ? 'The user wants to keep planning. Revise the plan.' : 'The user denied this action.');
+        response = { behavior: 'deny', message };
       }
-      response = { behavior: 'allow', updatedInput };
-      if (answer.always && block.suggestions.length) response.updatedPermissions = block.suggestions;
-    } else {
-      const message = (await toEn(answer.message)) || (block.kind === 'plan' ? 'The user wants to keep planning. Revise the plan.' : 'The user denied this action.');
-      response = { behavior: 'deny', message };
-      if (answer.message) block.denyMessage = answer.message;
+      // 翻译期间请求可能已被 Claude 取消
+      if (block.status !== 'pending') throw new Error('这个请求已经失效');
+      if (!live.run || live.run.exited) await this._ensureRun(live).catch(() => null);
+      if (!live.run || live.run.exited) throw new Error('Claude 已不在运行，无法回复这个请求');
+      await live.run.write({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response } });
+      if (block.kind === 'question' && answer.behavior === 'allow') block.answers = answer.answers;
+      if (answer.behavior !== 'allow' && answer.message) block.denyMessage = answer.message;
+      if (sentEn) block.sentEn = sentEn;
+      block.status = answer.behavior === 'allow' ? (answer.always ? 'always' : 'allowed') : 'denied';
+      if (conv.run) delete conv.run.pending[requestId];
+      this._emitMsg(conv, msg);
+      this._touch(conv, false);
+      if (answer.setMode) this.control(convId, { subtype: 'set_permission_mode', mode: answer.setMode }, { ensure: false }).catch(() => {});
+      return true;
+    } finally {
+      this._answering.delete(lockKey);
     }
-    if (!live.run || live.run.exited) await this._ensureRun(live).catch(() => null);
-    if (!live.run || live.run.exited) throw new Error('Claude 已不在运行，无法回复这个请求');
-    await live.run.write({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response } });
-    block.status = answer.behavior === 'allow' ? (answer.always ? 'always' : 'allowed') : 'denied';
-    if (conv.run) delete conv.run.pending[requestId];
-    this._emitMsg(conv, msg);
-    this._touch(conv, false);
-    if (answer.setMode) this.control(convId, { subtype: 'set_permission_mode', mode: answer.setMode }, { ensure: false }).catch(() => {});
-    return true;
   }
 
   // ======================= 翻译 =======================
@@ -1590,9 +1676,11 @@ class ChatManager extends EventEmitter {
     const ids = this._sessionIdsOf(conv);
     const live = this.live.get(id);
     if (live) {
-      if (live.run && !live.run.exited) {
-        await live.run.kill().catch(() => {});
-        await live.run.remove().catch(() => {});
+      // 先取出来：kill 之后退出处理会把 live.run 置空
+      const run = live.run;
+      if (run && !run.exited) {
+        await run.kill().catch(() => {});
+        await run.remove().catch(() => {});
       }
       this.live.delete(id);
     }
@@ -1818,6 +1906,7 @@ class ChatManager extends EventEmitter {
     const hours = new Array(24).fill(0);
     const models = new Map();
     const dayCounts = new Map();
+    const daily = new Map(); // 日期 → { date, total, models: { 模型: token } }
     for (const sum of this.store.listConversations()) {
       let conv;
       try {
@@ -1841,11 +1930,23 @@ class ChatManager extends EventEmitter {
           const t = (m.meta && m.meta.tokens) || 0;
           tokens += t;
           const per = m.meta && m.meta.models && Object.keys(m.meta.models).length ? m.meta.models : m.model ? { [m.model]: t } : {};
+          const io = (m.meta && m.meta.modelsIO) || {};
+          let day = daily.get(dk);
+          if (!day && Object.values(per).some((v) => v > 0)) daily.set(dk, (day = { date: dk, total: 0, models: {} }));
           for (const [name, v] of Object.entries(per)) {
-            const e = models.get(name) || { model: name, tokens: 0, messages: 0 };
+            const e = models.get(name) || { model: name, tokens: 0, messages: 0, input: 0, output: 0, ioKnown: false };
             e.tokens += v;
             e.messages++;
+            if (io[name]) {
+              e.input += io[name].in || 0;
+              e.output += io[name].out || 0;
+              e.ioKnown = true;
+            }
             models.set(name, e);
+            if (day && v > 0) {
+              day.total += v;
+              day.models[name] = (day.models[name] || 0) + v;
+            }
           }
         }
       }
@@ -1862,7 +1963,9 @@ class ChatManager extends EventEmitter {
       const k = dayKey(d.getTime());
       heatmap.push({ date: k, count: dayCounts.get(k) || 0 });
     }
-    return { range, sessions, messages, tokens, activeDays: days.size, peakHour: peak, favoriteModel: modelList[0] ? modelList[0].model : null, models: modelList, heatmap, rateLimits: this.rateLimits || null };
+    // 有用量的日期（最近 14 天有数据的），首页“模型”柱状图用
+    const dailyList = [...daily.values()].sort((a, b) => (a.date < b.date ? -1 : 1)).slice(-14);
+    return { range, sessions, messages, tokens, activeDays: days.size, peakHour: peak, favoriteModel: modelList[0] ? modelList[0].model : null, models: modelList, daily: dailyList, heatmap, rateLimits: this.rateLimits || null };
   }
 
   toMarkdown(conv) {

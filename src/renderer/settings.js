@@ -215,7 +215,9 @@ const PANES = {
       switchLine(d, ['mcp', 'readOnly'], '只读模式', 'Claude 只能浏览、读取和搜索，不能写入、移动或删除'),
       switchLine(d, ['mcp', 'confirmWrites'], '写入前确认', '创建、修改、移动、删除文件前弹窗确认（删除的文件进回收站）'),
       switchLine(d, ['mcp', 'allowCommands'], '允许执行 PowerShell 命令', '允许 Claude 在共享文件夹中运行命令，风险较高，默认关闭'),
-      switchLine(d, ['mcp', 'confirmCommands'], '执行命令前确认', '每条命令都需要你批准'),
+      switchLine(d, ['mcp', 'confirmCommands'], '执行命令前确认', '每条命令（包括后台启动开发服务器）都需要你批准'),
+      h('h3', {}, '内置浏览器'),
+      switchLine(d, ['mcp', 'browser'], '允许 Claude 使用内置浏览器', '打开、读取、点击、截图本机网页（如 localhost:3000），用来预览和测试 Claude 在本机启动的应用。打开外部网站前会先问你。'),
       h('h3', {}, '桌面控制（Cowork）'),
       switchLine(d, ['mcp', 'desktop'], '允许 Claude 操控本机桌面', '通过 Windows-MCP 截图、点击、输入、打开应用。需要本机安装 uv；首次启动会自动下载 Python 3.14 与依赖。'),
       selectField(d, ['mcp', 'desktopConfirm'], '桌面操作确认', [['risky', '仅高风险操作（PowerShell、进程、注册表、文件、启动应用）'], ['all', '每一步都确认'], ['none', '不确认（不推荐）']]),
@@ -289,6 +291,10 @@ const PANES = {
     return [
       h('h3', {}, '外观'),
       selectField(d, ['ui', 'theme'], '主题', [['system', '跟随系统'], ['light', '浅色'], ['dark', '深色']]),
+      textField(d, ['ui', 'displayName'], '显示名称', {
+        placeholder: `留空使用 Windows 用户名${state.appInfo && state.appInfo.username ? `（${state.appInfo.username}）` : ''}`,
+        hint: '显示在左下角和首页问候语里，只保存在本机。',
+      }),
       h('h3', {}, '快捷键'),
       h('div', { class: 'status-box' }, 'Enter 发送（Claude 运行中会排队）　Ctrl+Enter 运行中立即插话　Shift+Enter 换行\n/ 斜杠命令　Tab 填入建议　Shift+Tab 切换权限模式\nEsc 停止 Claude　↑ 编辑上一条消息　粘贴 / 拖入图片作为附件\nCtrl+N 新对话　Ctrl+Shift+N 新窗口　Ctrl+B 侧边栏　Ctrl+, 设置\nCtrl+` 终端　Ctrl+K 搜索　Alt+← / Alt+→ 后退 / 前进'),
     ];

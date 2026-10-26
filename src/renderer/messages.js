@@ -19,6 +19,16 @@ const LOCAL_TOOLS = {
   move_file: ['移动文件', 'move', (a) => (a.source ? `${a.source} → ${a.destination || ''}` : '')],
   delete_file: ['删除文件', 'trash', (a) => a.path],
   run_command: ['执行命令', 'terminal', (a) => a.command],
+  start_process: ['后台启动', 'terminal', (a) => a.command],
+  read_process_output: ['查看进程输出', 'terminal', (a) => a.id],
+  list_processes: ['查看后台进程', 'terminal', () => ''],
+  stop_process: ['停止进程', 'x', (a) => a.id],
+  browser_navigate: ['浏览器打开', 'globe', (a) => a.url || { back: '后退', forward: '前进', reload: '刷新' }[a.action] || ''],
+  browser_snapshot: ['读取网页', 'globe', () => ''],
+  browser_click: ['点击网页', 'globe', (a) => (a.ref ? `[${a.ref}]` : a.selector)],
+  browser_type: ['在网页输入', 'globe', (a) => a.text],
+  browser_screenshot: ['网页截图', 'image', () => ''],
+  browser_console: ['网页控制台', 'globe', () => ''],
 };
 const REMOTE_TOOLS = {
   Bash: ['执行命令', 'terminal', (a) => a.command],
@@ -423,8 +433,8 @@ function renderThinking(b) {
 function suggestionLabel(sugs) {
   const parts = [];
   for (const s of sugs || []) {
+    // setMode 不随“始终允许”生效（见 chat-manager answerPermission），这里也不列出
     if (s.type === 'addRules') for (const r of s.rules || []) parts.push(r.ruleContent ? `${r.toolName}(${r.ruleContent})` : r.toolName);
-    else if (s.type === 'setMode') parts.push(s.mode === 'acceptEdits' ? '本会话自动接受编辑' : `切换到 ${s.mode} 模式`);
     else if (s.type === 'addDirectories') parts.push(`允许访问 ${(s.directories || []).join(', ')}`);
   }
   return parts.join('；');
@@ -443,11 +453,28 @@ function permissionPreview(b) {
   return box;
 }
 
+// 正在提交的请求：提交（含翻译）期间卡片禁用，防止重复点击
+const answering = new Set();
+
+function setCardBusy(requestId, busy) {
+  const card = document.querySelector(`.perm-card[data-req="${CSS.escape(requestId)}"]`);
+  if (!card) return;
+  card.classList.toggle('busy', busy);
+  card.setAttribute('aria-busy', String(busy));
+  card.querySelectorAll('button, input, textarea').forEach((x) => (x.disabled = busy));
+}
+
 async function answer(b, ans) {
+  if (answering.has(b.requestId)) return;
+  answering.add(b.requestId);
+  setCardBusy(b.requestId, true);
   try {
     await api.answerPermission(state.currentId, b.requestId, ans);
   } catch (e) {
     toast(errMsg(e), 'error');
+    setCardBusy(b.requestId, false);
+  } finally {
+    answering.delete(b.requestId);
   }
 }
 
@@ -457,11 +484,11 @@ function renderToolPermission(b) {
   // 用 h() 包一层：原生 append 会把 null 当成文字 "null" 插入
   const card = h(
     'div',
-    { class: 'perm-card', role: 'group', 'aria-label': '权限请求' },
+    { class: 'perm-card', role: 'group', 'aria-label': '权限请求', 'data-req': b.requestId },
     h('div', { class: 'perm-title' }, svg('shield', 16), h('span', {}, `Claude 想要${d.local ? '在本机' : '在服务器上'}${d.label}`), h('code', {}, b.displayName || b.toolName)),
     desc && desc !== d.detail ? h('div', { class: 'perm-desc' }, desc) : null,
     permissionPreview(b),
-    b.decisionReason ? h('div', { class: 'perm-reason' }, svg('alert', 13), b.decisionReason) : null,
+    b.decisionReason ? h('div', { class: 'perm-reason', title: b.decisionReasonZh ? b.decisionReason : null }, svg('alert', 13), b.decisionReasonZh || b.decisionReason) : null,
     b.blockedPath ? h('div', { class: 'perm-reason' }, svg('folder', 13), `涉及工作目录之外的路径：${b.blockedPath}`) : null,
   );
   const msg = h('input', { type: 'text', class: 'perm-msg', placeholder: '拒绝时告诉 Claude 应该怎么做（可选）', 'aria-label': '拒绝理由' });
@@ -486,7 +513,7 @@ function renderToolPermission(b) {
 function renderQuestion(b) {
   const qs = Array.isArray(b.input.questions) ? b.input.questions : [];
   const zh = b.zh || {};
-  const card = h('div', { class: 'perm-card question', role: 'group', 'aria-label': 'Claude 的提问' });
+  const card = h('div', { class: 'perm-card question', role: 'group', 'aria-label': 'Claude 的提问', 'data-req': b.requestId });
   card.append(h('div', { class: 'perm-title' }, svg('help', 16), h('span', {}, 'Claude 有问题想问你')));
   const pickers = [];
   qs.forEach((q, i) => {
@@ -524,7 +551,7 @@ function renderQuestion(b) {
 }
 
 function renderPlan(b) {
-  const card = h('div', { class: 'perm-card plan', role: 'group', 'aria-label': '计划审批' });
+  const card = h('div', { class: 'perm-card plan', role: 'group', 'aria-label': '计划审批', 'data-req': b.requestId });
   card.append(h('div', { class: 'perm-title' }, svg('list', 16), h('span', {}, 'Claude 制定了计划，等待你批准')));
   const text = b.planZh || b.plan;
   if (text) {
@@ -553,11 +580,25 @@ function renderPermission(b) {
     if (b.kind === 'question' && b.answers) extra = `：${Object.values(b.answers).join('；')}`;
     if (b.status === 'denied' && b.denyMessage) extra = `：${b.denyMessage}`;
     const label = b.kind === 'plan' ? (b.status === 'denied' ? '计划：继续规划' : '计划已批准') : b.kind === 'question' ? `回答了 Claude 的问题${extra}` : `${resolvedLabel[b.status] || b.status} · ${d.label}${extra}`;
-    return h('div', { class: `perm-done ${b.status}` }, svg(b.status === 'denied' ? 'x' : b.status === 'cancelled' ? 'alert' : 'check', 13), label);
+    const done = h('div', { class: `perm-done ${b.status}` }, svg(b.status === 'denied' ? 'x' : b.status === 'cancelled' ? 'alert' : 'check', 13), label);
+    if (!b.sentEn) return done;
+    // 理由 / 答案经过翻译：可以展开查看实际发给 Claude 的英文
+    const key = `sent:${b.key}`;
+    const det = h('details', { class: 'tr-detail perm-sent', open: state.expanded.has(key) }, h('summary', { html: `${icon('languages', 13)}<span>已翻译为英文发送</span>` }), h('div', { class: 'en' }, b.sentEn));
+    det.addEventListener('toggle', () => toggleSet(state.expanded, key, det.open));
+    return h('div', { class: 'perm-done-wrap' }, done, det);
   }
-  if (b.kind === 'question') return renderQuestion(b);
-  if (b.kind === 'plan') return renderPlan(b);
-  return renderToolPermission(b);
+  let card;
+  if (b.kind === 'question') card = renderQuestion(b);
+  else if (b.kind === 'plan') card = renderPlan(b);
+  else card = renderToolPermission(b);
+  // 提交过程中消息被重新渲染时，保持禁用状态
+  if (answering.has(b.requestId)) {
+    card.classList.add('busy');
+    card.setAttribute('aria-busy', 'true');
+    card.querySelectorAll('button, input, textarea').forEach((x) => (x.disabled = true));
+  }
+  return card;
 }
 
 // ---- 整条回复 ----
