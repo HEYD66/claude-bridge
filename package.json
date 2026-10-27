@@ -13,7 +13,8 @@
   },
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win"
+    "dist": "electron-builder --win",
+    "promo": "electron scripts/promo/render.js"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.11.0",
