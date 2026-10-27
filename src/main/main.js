@@ -13,6 +13,7 @@ const { LocalMcpServer } = require('./mcp-server');
 const { ChatManager } = require('./chat-manager');
 const { RemoteFs } = require('./remote-fs');
 const { Customize } = require('./customize');
+const { ServerProbe } = require('./server-probe');
 const { DesktopMcp } = require('./desktop-mcp');
 const { LocalProcesses } = require('./local-procs');
 const { BrowserHost, listLocalServices } = require('./browser-host');
@@ -57,6 +58,7 @@ let mcpServer;
 let chat;
 let rfs;
 let customize;
+let probe; // 服务器环境检测（origin-probe）
 let desktop;
 let procs; // Claude 在本机启动的后台进程
 let browserHost; // 内置浏览器
@@ -357,6 +359,9 @@ function registerIpc() {
     return buildStatus();
   });
   handle('claude:detect', () => chat.detectClaude());
+  // 版本、下载地址和校验值都固定在主进程，渲染进程只能选是否联网
+  handle('probe:info', () => probe.info());
+  handle('probe:run', (opts) => probe.run({ offline: !(opts && opts.offline === false) }));
 
   handle('translate:test', async (tr) => {
     const sample = 'The build finished successfully. Run `npm test` to verify the changes.';
@@ -534,6 +539,7 @@ if (!app.requestSingleInstanceLock()) {
     });
     rfs = new RemoteFs(ssh);
     customize = new Customize(rfs, ssh, () => store.getSettings());
+    probe = new ServerProbe(ssh);
     ssh.on('state', pushStatus);
 
     chat = new ChatManager({

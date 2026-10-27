@@ -34,6 +34,7 @@ import { initTerminal, openTerminalPanel, contextPopover, renderRateLimits, impo
 import { initDock, initFiles, initChanges, toggleFiles, toggleChanges, refreshChanges, syncDockRoot } from './dock.js';
 import { initBrowser, toggleBrowser } from './browser-panel.js';
 import { openSettings, EFFORT_OPTIONS, PERM_OPTIONS } from './settings.js';
+import { openServerProbe } from './probe.js';
 
 // 后退 / 前进历史（null 表示首页）
 const nav = { stack: [null], idx: 0 };
@@ -431,7 +432,8 @@ function accountMenu(anchor) {
     anchor,
     [
       { heading: connStatusText() },
-      account && account.email ? { text: account.email, desc: account.subscriptionType ? `Claude ${account.subscriptionType}` : '服务器上登录的 Claude 账号', disabled: true } : null,
+      // subscriptionType 可能是 "pro"，也可能已经是 "Claude Pro"
+      account && account.email ? { text: account.email, desc: account.subscriptionType ? (/^claude\b/i.test(account.subscriptionType) ? account.subscriptionType : `Claude ${account.subscriptionType}`) : '服务器上登录的 Claude 账号', disabled: true } : null,
       configured && !busy ? { text: '连接服务器', icon: 'plug', onClick: connect } : null,
       busy ? { text: on ? '断开连接' : '取消连接', icon: 'logout', onClick: disconnect } : null,
       '-',
@@ -439,6 +441,8 @@ function accountMenu(anchor) {
       configured ? { text: '在外部终端中打开', icon: 'external', onClick: openExternalTerminal } : null,
       on ? { text: '登录服务器上的 Claude…', icon: 'key', onClick: () => openTerminalPanel({ kind: 'login' }) } : null,
       on ? { text: '更新 Claude Code…', icon: 'download', onClick: () => openTerminalPanel({ kind: 'update' }) } : null,
+      // 未连接时也显示（禁用），方便找到入口
+      configured ? { text: '服务器环境检测…', icon: 'shield', desc: on ? null : '连接服务器后可用', disabled: !on, onClick: openServerProbe } : null,
       { text: '用量额度', icon: 'gauge', onClick: showLimits },
       '-',
       { text: '服务器设置', icon: 'server', onClick: () => openSettings('ssh') },

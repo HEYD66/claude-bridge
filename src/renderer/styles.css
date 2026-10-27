@@ -3968,3 +3968,357 @@ textarea.perm-msg {
 .br-other .br-svc {
   margin-top: 4px;
 }
+
+/* 服务器环境检测（origin-probe） */
+.probe-sub {
+  margin: 14px 0 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.probe-list {
+  margin: 0 0 4px;
+  padding-left: 20px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.probe-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 12px;
+  margin-bottom: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.probe-opt:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.probe-opt input {
+  margin-top: 4px;
+  accent-color: var(--accent);
+}
+
+.probe-opt b {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.probe-opt-desc {
+  display: block;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.dialog-body .probe-hint {
+  margin: 10px 0 0;
+}
+
+.probe-running {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 40px 0 6px;
+  justify-content: center;
+  color: var(--text-2);
+}
+
+.probe-running + .probe-hint {
+  text-align: center;
+}
+
+.probe-summary {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin: 4px 0 6px;
+}
+
+.probe-score {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 120px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--bg-hover);
+}
+
+.probe-pct {
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.probe-pct small {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* 总分条：0–100，中间一条 50 分的线 */
+.probe-bar {
+  position: relative;
+  height: 8px;
+  margin: 6px 0 2px;
+  border-radius: 999px;
+  background: var(--bg-active);
+  overflow: hidden;
+}
+
+.probe-bar-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.probe-bar-mid {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--bg-elev);
+}
+
+.probe-bar-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--faint);
+  line-height: 1.4;
+}
+
+/* 各类打分 */
+.probe-cats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 4px;
+}
+
+.probe-cats-label {
+  font-size: 12px;
+  color: var(--muted);
+  align-self: center;
+}
+
+.probe-chip {
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 加分 / 减分只用中性的两种颜色，不带好坏含义 */
+.probe-chip.for {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.probe-chip.against {
+  color: var(--link);
+  background: rgba(47, 111, 219, 0.1);
+}
+
+/* 中文分析 */
+.probe-analysis {
+  margin: 4px 0 2px;
+  padding: 2px 14px 6px;
+  border-left: 3px solid var(--accent);
+  background: var(--bg-hover);
+  border-radius: 0 10px 10px 0;
+}
+
+.probe-analysis .probe-sub {
+  margin-top: 10px;
+}
+
+.dialog-body .probe-analysis p {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.probe-verdict {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.probe-meta {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.8;
+}
+
+.probe-headline {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.probe-small {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* 理由列表 */
+.probe-reasons {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.probe-reason {
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--bg-hover);
+  margin-bottom: 6px;
+}
+
+.probe-reason-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13.5px;
+}
+
+.probe-reason-main > span:first-child {
+  flex: 1;
+}
+
+.probe-reason-seen {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--muted);
+  word-break: break-word;
+}
+
+.probe-reason-seen .mono {
+  font-family: var(--font-mono);
+}
+
+.probe-reason-tip {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+/* 影响大小：同一种中性色，越大越深 */
+.probe-weight {
+  flex: none;
+  font-size: 11.5px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  color: var(--text-2);
+  border: 1px solid var(--border-strong);
+}
+
+.probe-weight.w3,
+.probe-weight.w4 {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.probe-weight.w4 {
+  border-color: var(--text-2);
+}
+
+.probe-empty {
+  font-size: 12.5px;
+  color: var(--muted);
+  padding: 2px 0 4px;
+}
+
+.probe-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  margin-bottom: 6px;
+}
+
+.probe-table th,
+.probe-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+  word-break: break-word;
+}
+
+.probe-table th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+/* 每个类别一张小表，固定列宽让各表的列对齐 */
+.probe-table.compact {
+  table-layout: fixed;
+}
+
+.probe-table.compact td {
+  padding: 3px 8px;
+}
+
+.probe-table.compact td.probe-mark {
+  width: 44px;
+  text-align: center;
+  font-size: 12px;
+}
+
+.probe-table .mono {
+  font-family: var(--font-mono);
+}
+
+.probe-table .nowrap,
+.probe-lr {
+  white-space: nowrap;
+}
+
+.probe-lr,
+.probe-mark {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.probe-lr.for,
+.probe-mark.for {
+  color: var(--accent);
+}
+
+.probe-lr.against,
+.probe-mark.against {
+  color: var(--link);
+}
+
+.probe-name {
+  width: 32%;
+}
+
+.probe-obs {
+  margin-top: 2px;
+  color: var(--muted);
+}
+
+.probe-all {
+  margin-top: 12px;
+}
+
+.probe-all summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-2);
+}

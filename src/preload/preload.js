@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld('bridge', {
   connect: () => invoke('ssh:connect'),
   disconnect: () => invoke('ssh:disconnect'),
   detectClaude: () => invoke('claude:detect'),
+  probeInfo: () => invoke('probe:info'),
+  runProbe: (opts) => invoke('probe:run', opts),
   refreshClaudeInfo: () => invoke('claude:refreshInfo'),
   testTranslation: (tr) => invoke('translate:test', tr),
   translate: (text, from, to) => invoke('translate:text', text, from, to),
